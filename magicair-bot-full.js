@@ -7,7 +7,7 @@ const { OpenAI } = require('openai');
 const fs = require('fs');
 
 // ========== CONFIG ==========
-// ВАЖНО: Токен теперь загружается из переменной окружения!
+// ВАЖНО: Токен тепер загружается из переменной окружения!
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) {
   console.error('⛔️ TELEGRAM_BOT_TOKEN не знайдено в змінних оточеннях!');
@@ -18,9 +18,13 @@ const MANAGERS = process.env.MANAGER_IDS
   ? process.env.MANAGER_IDS.split(',').map(s => parseInt(s.trim())).filter(Boolean)
   : [7764495189,5106454153, /* третій ID */];
 
+// --- Додайте console.log сюди ---
+console.log('Список менеджерів:', MANAGERS);
+// ------------------------------------
+
 const MANAGERS_DATA = {
-    7764495189: "Микола",
-    5106454153: "Володимир",
+  7764495189: "Микола",
+  5106454153: "Володимир",
 };
 
 // НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ГРАФИКА
@@ -1754,4 +1758,5 @@ process.on('SIGTERM', () => {
 
 
 console.log('✅ MagicAir бот запущено!');
+
 
