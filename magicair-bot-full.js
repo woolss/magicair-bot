@@ -16,7 +16,7 @@ if (!token) {
 
 const MANAGERS = process.env.MANAGER_IDS
   ? process.env.MANAGER_IDS.split(',').map(s => parseInt(s.trim())).filter(Boolean)
-  : [7764495189, 5106454153, /* третій ID */];
+  : [7764495189,5106454153, /* третій ID */];
 
 const MANAGERS_DATA = {
     7764495189: "Микола",
@@ -1754,3 +1754,4 @@ process.on('SIGTERM', () => {
 
 
 console.log('✅ MagicAir бот запущено!');
+
