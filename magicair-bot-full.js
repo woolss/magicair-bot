@@ -14,18 +14,11 @@ if (!token) {
   process.exit(1);
 }
 
-const managerIdsString = process.env.MANAGER_IDS || '';
-const managerVladimirId = process.env.MANAGER_VLADIMIR_ID;
+const MANAGERS = process.env.MANAGER_IDS
+  ? process.env.MANAGER_IDS.split(',').map(s => parseInt(s.trim())).filter(Boolean)
+  : [7764495189,5106454153, /* третій ID */];
 
-const MANAGERS = managerIdsString
-  .split(',')
-  .map(s => parseInt(s.trim()))
-  .filter(Boolean);
-
-if (managerVladimirId) {
-    MANAGERS.push(parseInt(managerVladimirId));
-}
-
+// --- Додайте console.log сюди ---
 console.log('Список менеджерів:', MANAGERS);
 // ------------------------------------
 
@@ -1765,6 +1758,7 @@ process.on('SIGTERM', () => {
 
 
 console.log('✅ MagicAir бот запущено!');
+
 
 
 
