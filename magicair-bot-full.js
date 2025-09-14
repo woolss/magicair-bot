@@ -16,10 +16,11 @@ if (!token) {
 
 const MANAGERS = process.env.MANAGER_IDS
   ? process.env.MANAGER_IDS.split(',').map(s => parseInt(s.trim())).filter(Boolean)
-  : [7764495189, /* другий ID */, /* третій ID */];
+  : [7764495189, 5106454153, /* третій ID */];
 
 const MANAGERS_DATA = {
     7764495189: "Микола",
+    5106454153: "Володимир",
 };
 
 // НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ГРАФИКА
@@ -1750,5 +1751,6 @@ process.on('SIGTERM', () => {
   bot.stopPolling();
   process.exit(0);
 });
+
 
 console.log('✅ MagicAir бот запущено!');
