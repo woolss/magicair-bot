@@ -1,0 +1,1754 @@
+// magicair-bot-full.js
+process.env["NTBA_FIX_319"] = 1;
+process.env["NTBA_FIX_350"] = 1;
+
+const TelegramBot = require('node-telegram-bot-api');
+const { OpenAI } = require('openai');
+const fs = require('fs');
+
+// ========== CONFIG ==========
+// ВАЖНО: Токен теперь загружается из переменной окружения!
+const token = process.env.TELEGRAM_BOT_TOKEN;
+if (!token) {
+  console.error('⛔️ TELEGRAM_BOT_TOKEN не знайдено в змінних оточеннях!');
+  process.exit(1);
+}
+
+const MANAGERS = process.env.MANAGER_IDS
+  ? process.env.MANAGER_IDS.split(',').map(s => parseInt(s.trim())).filter(Boolean)
+  : [7764495189, /* другий ID */, /* третій ID */];
+
+const MANAGERS_DATA = {
+    7764495189: "Микола",
+};
+
+// НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ГРАФИКА
+const WORKING_HOURS = {
+    start: 9, // 9:00
+    end: 21 // 21:00
+};
+
+const bot = new TelegramBot(token, {
+  polling: {
+    interval: 2000,
+    autoStart: true,
+    params: { timeout: 10 }
+  },
+  request: {
+    agentOptions: {
+      keepAlive: true,
+      family: 4
+    }
+  }
+});
+
+let openai = null;
+if (process.env.OPENAI_API_KEY) {
+  try {
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    console.log('✅ OpenAI підключений');
+  } catch (err) {
+    console.log('⚠️ OpenAI не підключений:', err.message);
+  }
+} else {
+  console.log('⚠️ OPENAI_API_KEY не знайдений');
+}
+
+// ========== STATE ==========
+const userStates = {};
+const waitingClients = new Set();
+const activeManagerChats = {};
+const messageLog = [];
+const userProfiles = {};
+const activePromotions = [];
+const holidays = [
+  { date: '14.02', name: 'День Святого Валентина', emoji: '💕' },
+  { date: '08.03', name: 'Міжнародний жіночий день', emoji: '🌸' },
+  { date: '01.01', name: 'Новий рік', emoji: '🎊' },
+  { date: '25.12', name: 'Різдво', emoji: '🎄' },
+  { date: '31.10', name: 'Хелловін', emoji: '🎃' }
+];
+
+const isManager = id => MANAGERS.includes(id);
+const getManagerName = id => MANAGERS_DATA[id] || `Менеджер (${id})`;
+
+// ========== MENUS ==========
+const mainMenu = {
+  reply_markup: {
+    keyboard: [
+      ['🛒 Каталог', '❓ FAQ'],
+      ['📱 Сайт', '📞 Контакти'],
+      ['🔍 Пошук', '💬 Менеджер'],
+      ['👤 Профіль']
+    ],
+    resize_keyboard: true
+  }
+};
+const managerMenu = {
+  reply_markup: {
+    keyboard: [
+      ['📋 Клієнти', '🎁 Активні акції'],
+      ['📄 Журнал', '📊 Статистика'],
+      ['🛑 Завершити чат']
+    ],
+    resize_keyboard: true
+  }
+};
+const clientInChatMenu = {
+  reply_markup: {
+    keyboard: [
+      ['🏠 Головне меню']
+    ],
+    resize_keyboard: true
+  }
+};
+
+function buildProfileMenu(chatId) {
+  const profile = userProfiles[chatId];
+  const inline = [];
+
+  if (!profile || !profile.name) {
+    inline.push([{ text: '📝 Заповнити профіль', callback_data: 'fill_profile' }]);
+  } else {
+    inline.push([{ text: '👤 Мій профіль', callback_data: 'show_profile' }]);
+  }
+
+  inline.push([{ text: '✏️ Редагувати дані', callback_data: 'edit_profile' }]);
+  inline.push([{ text: '🔔 Налаштування сповіщень', callback_data: 'notification_settings' }]);
+  inline.push([{ text: '🏠 Головне меню', callback_data: 'main_menu' }]);
+
+  return { reply_markup: { inline_keyboard: inline } };
+}
+
+const catalogMenu = {
+  reply_markup: {
+    inline_keyboard: [
+      [{ text: '🎈 Латексні кулі', callback_data: 'cat_latex' }],
+      [{ text: '✨ Фольговані кулі', callback_data: 'cat_foil' }],
+      [{ text: '🎁 Готові набори', callback_data: 'cat_sets' }],
+      [{ text: '🎉 Товари для свята', callback_data: 'cat_party' }],
+      [{ text: '🏠 Головне меню', callback_data: 'main_menu' }]
+    ]
+  }
+};
+const latexMenu = {
+  reply_markup: {
+    inline_keyboard: [
+      [{ text: '🔴 Однотонні', callback_data: 'latex_plain' }],
+      [{ text: '🎨 З малюнком', callback_data: 'latex_pattern' }],
+      [{ text: '✨ З конфеті', callback_data: 'latex_confetti' }],
+      [{ text: '🌈 Агат/Браш', callback_data: 'latex_agate' }],
+      [{ text: '🎀 З бантиками', callback_data: 'latex_bow' }],
+      [{ text: '⬅️ Назад', callback_data: 'catalog' }]
+    ]
+  }
+};
+const foilMenu = {
+  reply_markup: {
+    inline_keyboard: [
+      [{ text: '🦄 Фігури', callback_data: 'foil_figures' }],
+      [{ text: '🔢 Цифри', callback_data: 'foil_numbers' }],
+      [{ text: '🚶 Ходячі фігури', callback_data: 'foil_walking' }],
+      [{ text: '🎨 З малюнком', callback_data: 'foil_pattern' }],
+      [{ text: '💖 Серця/Зірки', callback_data: 'foil_hearts' }],
+      [{ text: '⬅️ Назад', callback_data: 'catalog' }]
+    ]
+  }
+};
+const setsMenu = {
+  reply_markup: {
+    inline_keyboard: [
+      [{ text: '🎈 Готові набори кульок', callback_data: 'sets_bouquets' }],
+      [{ text: '📦 Сюрприз коробки', callback_data: 'sets_boxes' }],
+      [{ text: '📸 Фотозона', callback_data: 'sets_photozone' }],
+      [{ text: '⬅️ Назад', callback_data: 'catalog' }]
+    ]
+  }
+};
+const partyMenu = {
+  reply_markup: {
+    inline_keyboard: [
+      [{ text: '🕯️ Свічки', callback_data: 'party_candles' }],
+      [{ text: '🌸 Аромадифузори', callback_data: 'party_aroma' }],
+      [{ text: '🎪 Декор для свята', callback_data: 'party_decor' }],
+      [{ text: '⬅️ Назад', callback_data: 'catalog' }]
+    ]
+  }
+};
+const faqMenu = {
+  reply_markup: {
+    inline_keyboard: [
+      [{ text: '🚚 Доставка та оплата', callback_data: 'faq_delivery' }],
+      [{ text: '🎈 Про кулі та гелій', callback_data: 'faq_balloons' }],
+      [{ text: '📅 Замовлення та терміни', callback_data: 'faq_orders' }],
+      [{ text: '🎁 Оформлення та декор', callback_data: 'faq_decoration' }],
+      [{ text: '📞 Контакти та режим роботи', callback_data: 'faq_contacts' }],
+      [{ text: '🏠 Головне меню', callback_data: 'main_menu' }]
+    ]
+  }
+};
+const prefilterMenu = {
+  reply_markup: {
+    inline_keyboard: [
+      [{ text: '💰 Питання про ціни', callback_data: 'filter_price' }],
+      [{ text: '🚚 Доставка та оплата', callback_data: 'filter_delivery' }],
+      [{ text: '🎈 Вибір кульок', callback_data: 'filter_balloons' }],
+      [{ text: '🎉 Оформлення свята', callback_data: 'filter_event' }],
+      [{ text: '🚨Термінове питання', callback_data: 'filter_urgent' }],
+      [{ text: '❓ Інше питання', callback_data: 'filter_other' }]
+    ]
+  }
+};
+
+// ========== HELPERS ==========
+function isWorkingHours() {
+    const now = new Date();
+    const kievTime = new Date(now.toLocaleString("en-US", {timeZone: "Europe/Kiev"}));
+    const hours = kievTime.getHours();
+    
+    return hours >= WORKING_HOURS.start && hours < WORKING_HOURS.end;
+}
+
+// ========== ERRORS ==========
+bot.on('error', (error) => {
+  console.error('🚨 Bot Error:', error.message);
+});
+bot.on('polling_error', (error) => {
+  console.error('🚨 Polling Error:', error.code || error.message);
+  if (error.message && (
+    error.message.includes('certificate') ||
+    error.message.includes('ECONNRESET') ||
+    error.message.includes('EFATAL')
+  )) {
+    console.log('⚠️ Temporary connection issue - continuing...');
+    return;
+  }
+});
+
+// ========== START ==========
+bot.onText(/\/start/, async (msg) => {
+  const chatId = msg.chat.id;
+  const firstName = msg.from.first_name || 'друже';
+  console.log(`▶️ START: ${chatId}, Managers: ${MANAGERS.join(',')}`);
+
+  try {
+    if (isManager(chatId)) {
+      const managerName = getManagerName(chatId);
+      console.log(`✅ Менеджер ${managerName} (${chatId}) активований`);
+      await bot.sendMessage(chatId,
+        `👨‍💼 Привіт, ${managerName}!\n🆔 ID: ${chatId}\n✅ Бот готовий до роботи`,
+        managerMenu
+      );
+    } else {
+      userStates[chatId] = { step: 'menu' };
+      await bot.sendMessage(chatId,
+        `🎈 Привіт, ${firstName}!\n\nВітаємо в MagicAir - магазині кульок та товарів для свята! 🎉\n\nОберіть опцію з меню:`,
+        mainMenu
+      );
+    }
+  } catch (error) {
+    console.error('⚠ Start error:', error);
+  }
+});
+
+// ========== MESSAGES ==========
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const text = msg.text || '';
+  const userName = msg.from.first_name || 'Клієнт';
+
+  if (text && text.startsWith('/')) {
+    if (text === '/end') {
+      await handleEndCommand(chatId);
+    }
+    return;
+  }
+
+  console.log(`📨 ${chatId} (${userName}): ${text}`);
+
+  try {
+    if (isManager(chatId)) {
+      await handleManagerMessage(msg);
+    } else {
+      await handleClientMessage(msg);
+    }
+  } catch (error) {
+      console.error('⚠ Message error:', error);
+      await bot.sendMessage(chatId, '⚠ Помилка. Спробуйте /start').catch(() => {});
+  }
+});
+
+// ========== CLIENT HANDLER ==========
+async function handleClientMessage(msg) {
+  const chatId = msg.chat.id;
+  const text = msg.text || '';
+  const userName = msg.from.first_name || 'Клієнт';
+
+  if (userProfiles[chatId]) userProfiles[chatId].lastActivity = Date.now();
+
+  // Проверяем, находится ли клиент в активном чате с менеджером
+  if (userStates[chatId]?.step === 'manager_chat') {
+    // Если клиент прислал "Главное меню", завершаем чат
+    if (text === '🏠 Головне меню') {
+      await handleEndCommand(chatId);
+      return;
+    }
+    // В противном случае, пересылаем сообщение менеджеру
+    await forwardToManager(chatId, text, userName);
+    return;
+  }
+
+  switch (text) {
+    case '🛒 Каталог':
+      await bot.sendMessage(chatId, '🛒 Каталог товарів MagicAir:\n\nОберіть категорію:', catalogMenu); return;
+    case '❓ FAQ':
+      await sendInteractiveFAQ(chatId); return;
+    case '📱 Сайт':
+      await bot.sendMessage(chatId,
+        '🌍 Наш сайт:\n👉 https://magicair.com.ua\n\n🛒 Тут ви можете переглянути повний каталог та оформити замовлення!',
+        { reply_markup: { inline_keyboard: [
+            [{ text: '🛒 Відкрити сайт', url: 'https://magicair.com.ua' }],
+            [{ text: '🏠 Головне меню', callback_data: 'main_menu' }]
+        ]}}
+      ); return;
+    case '📞 Контакти':
+      await sendContacts(chatId); return;
+    case '🔍 Пошук':
+      userStates[chatId] = { step: 'search' };
+      await bot.sendMessage(chatId, '🔍 Введіть назву товару для пошуку:'); return;
+    case '💬 Менеджер':
+      // ИСПОЛЬЗУЕМ НОВУЮ ФУНКЦИЮ ПРОВЕРКИ ВРЕМЕНИ
+      if (isWorkingHours()) {
+          await startPreFilter(chatId, userName);
+      } else {
+          await bot.sendMessage(chatId,
+              `⏰ Ви звернулися в неробочий час.\n\n` +
+              `Графік роботи менеджерів: **з ${WORKING_HOURS.start}:00 до ${WORKING_HOURS.end}:00**.\n\n` +
+              `Ми обов'язково відповімо вам у найближчі робочі години!`,
+              { parse_mode: 'Markdown', ...mainMenu }
+          );
+      }
+      return;
+    case '👤 Профіль':
+      await showProfile(chatId); return;
+  }
+
+  if (userStates[chatId]?.step?.startsWith('profile_')) {
+    await handleProfileInput(chatId, text, userStates[chatId].step);
+    return;
+  }
+  if (userStates[chatId]?.step === 'search') {
+    await handleSearch(chatId, text);
+    delete userStates[chatId];
+    return;
+  }
+
+  await handleGeneralMessage(chatId, text, userName);
+}
+
+// ========== MANAGER HANDLER ==========
+async function handleManagerMessage(msg) {
+  const managerId = msg.chat.id;
+  const text = msg.text || '';
+
+  const managerCommands = ['📋 Клієнти', '🎁 Активні акції', '📄 Журнал', '🛑 Завершити чат', '📊 Статистика', '🎁 Створити акцію'];
+
+  if (userStates[managerId]?.step?.startsWith('promo_')) {
+    await handlePromotionInput(managerId, text, userStates[managerId].step);
+    return;
+  }
+
+  if (activeManagerChats[managerId] && !managerCommands.includes(text)) {
+    const clientId = activeManagerChats[managerId];
+    await bot.sendMessage(clientId, `👨‍💼 ${getManagerName(managerId)}: ${text}`);
+    logMessage(managerId, clientId, text, 'manager');
+    return;
+  }
+
+  switch (text) {
+    case '📋 Клієнти':
+      await showClientsList(managerId);
+      break;
+    case '🎁 Активні акції':
+      await showPromotionsList(managerId);
+      break;
+    case '📄 Журнал':
+      await showMessageLog(managerId);
+      break;
+    case '🛑 Завершити чат':
+      await endManagerChat(managerId);
+      break;
+    case '📊 Статистика':
+      await showStats(managerId);
+      break;
+    case '🎁 Створити акцію':
+      await startPromotionCreation(managerId);
+      break;
+    default:
+      if (!activeManagerChats[managerId]) {
+         await bot.sendMessage(managerId, '👨‍💼 Будь ласка, оберіть дію з меню.');
+      }
+      break;
+  }
+}
+
+// ========== CALLBACK QUERIES ==========
+bot.on('callback_query', async (query) => {
+  const chatId = query.message.chat.id;
+  const data = query.data;
+  const messageId = query.message.message_id;
+
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+
+  try {
+    switch (data) {
+      // --- Каталог ---
+      case 'catalog':
+        await bot.editMessageText('🛒 Каталог товарів MagicAir:\n\nОберіть категорію:',
+          { chat_id: chatId, message_id: messageId, ...catalogMenu });
+        break;
+      case 'cat_latex':
+        await bot.editMessageText('🎈 Латексні гелієві кулі:\n\nОберіть підкатегорію:',
+          { chat_id: chatId, message_id: messageId, ...latexMenu });
+        break;
+      case 'cat_foil':
+        await bot.editMessageText('✨ Фольговані гелієві кулі:\n\nОберіть підкатегорію:',
+          { chat_id: chatId, message_id: messageId, ...foilMenu });
+        break;
+      case 'cat_sets':
+        await bot.editMessageText('🎁 Готові набори:\n\nОберіть тип:',
+          { chat_id: chatId, message_id: messageId, ...setsMenu });
+        break;
+      case 'cat_party':
+        await bot.editMessageText('🎉 Товари для свята:\n\nОберіть категорію:',
+          { chat_id: chatId, message_id: messageId, ...partyMenu });
+        break;
+
+      // --- Latex ---
+      case 'latex_plain':
+        await sendProductInfo(chatId, messageId,
+          '🔴 Однотонні латексні кулі (80-110 грн)',
+          'Класичні однотонні кулі всіх кольорів. Пастельні, металік, хром.',
+          'https://magicair.com.ua/lateksnye-shary/'
+        );
+        break;
+      case 'latex_pattern':
+        await sendProductInfo(chatId, messageId,
+          '🎨 Латексні кулі з малюнком (95-120 грн)',
+          'Яскраві кулі з різноманітними малюнками та принтами.',
+          'https://magicair.com.ua/heliievi-kulky-z-maliunkom/'
+        );
+        break;
+      case 'latex_confetti':
+        await sendProductInfo(chatId, messageId,
+          '✨ Кулі з конфеті (115 грн)',
+          'Прозорі кулі з яскравими конфеті всередині.',
+          'https://magicair.com.ua/shary-s-konfetti/'
+        );
+        break;
+      case 'latex_agate':
+        await sendProductInfo(chatId, messageId,
+          '🌈 Кулі Агат/Браш (120-125 грн)',
+          'Унікальні кулі з мармуровим ефектом.',
+          'https://magicair.com.ua/heliievi-kulky-ahat-brash/'
+        );
+        break;
+      case 'latex_bow':
+        await sendProductInfo(chatId, messageId,
+          '🎀 Кулі з бантиками',
+          'Елегантні кулі з атласними бантиками.',
+          'https://magicair.com.ua/heliievi-kulky-z-bantykamy/'
+        );
+        break;
+
+      // --- Foil ---
+      case 'foil_figures':
+        await sendProductInfo(chatId, messageId,
+          '🦄 Фольговані фігури (350-900 грн)',
+          'Фігурні кулі: тваринки, персонажі, предмети.',
+          'https://magicair.com.ua/folgirovannye-figury/'
+        );
+        break;
+      case 'foil_numbers':
+        await sendProductInfo(chatId, messageId,
+          '🔢 Фольговані цифри (385-590 грн)',
+          'Цифри 70 та 100см для днів народження та річниць.',
+          'https://magicair.com.ua/folhovani-tsyfry/'
+        );
+        break;
+      case 'foil_walking':
+        await sendProductInfo(chatId, messageId,
+          '🚶 Ходячі фігури',
+          'Унікальні кулі-фігури, що "ходять" по підлозі.',
+          'https://magicair.com.ua/khodyachie-shary/'
+        );
+        break;
+      case 'foil_pattern':
+        await sendProductInfo(chatId, messageId,
+          '🎨 Фольговані з малюнком',
+          'Фольговані кулі з яскравими малюнками та написами.',
+          'https://magicair.com.ua/folgirovannye-shary-s-risunkom/'
+        );
+        break;
+      case 'foil_hearts':
+        await sendProductInfo(chatId, messageId,
+          '💖 Серця та зірки однотонні',
+          'Романтичні серця та святкові зірки.',
+          'https://magicair.com.ua/bez-maliunka/'
+        );
+        break;
+
+      // --- Sets ---
+      case 'sets_bouquets':
+        await sendProductInfo(chatId, messageId,
+          '🎈 Набори кульок (695-11670 грн)',
+          'Готові композиції з кульок для різних подій.',
+          'https://magicair.com.ua/bukety-sharov/'
+        );
+        break;
+      case 'sets_boxes':
+        await sendProductInfo(chatId, messageId,
+          '📦 Сюрприз коробки (745-4300 грн)',
+          'Коробки 70см з кульками всередині - незабутній сюрприз!',
+          'https://magicair.com.ua/surpriz-boksy/'
+        );
+        break;
+      case 'sets_photozone':
+        await sendProductInfo(chatId, messageId,
+          '📸 Фотозона',
+          'Фотозони та гірлянди з повітряних куль.',
+          'https://magicair.com.ua/fotozona/'
+        );
+        break;
+
+      // --- Party ---
+      case 'party_candles':
+        await sendProductInfo(chatId, messageId,
+          '🕯️ Святкові свічки',
+          'Свічки для торту та декору. Великий вибір натуральних ароматичних свічок',
+          'https://magicair.com.ua/svechi/'
+        );
+        break;
+      case 'party_aroma':
+        await sendProductInfo(chatId, messageId,
+          '🌸 Аромадифузори',
+          'Ароматичні дифузори для затишної атмосфери.',
+          'https://magicair.com.ua/aromadyfuzor/'
+        );
+        break;
+      case 'party_decor':
+        await sendProductInfo(chatId, messageId,
+          '🎪 Декор для свята',
+          'Різноманітні товари для оформлення свят.',
+          'https://magicair.com.ua/tovary-dlia-sviata/'
+        );
+        break;
+
+      // --- FAQ ---
+      case 'faq_delivery': await sendDeliveryInfo(chatId, messageId); break;
+      case 'faq_balloons': await sendBalloonsInfo(chatId, messageId); break;
+      case 'faq_orders': await sendOrdersInfo(chatId, messageId); break;
+      case 'faq_decoration': await sendDecorationInfo(chatId, messageId); break;
+      case 'faq_contacts': await sendContactsInfo(chatId, messageId); break;
+      case 'faq_back':
+        await bot.editMessageText('❓ Часті питання:\n\nОберіть тему, що вас цікавить:',
+          { chat_id: chatId, message_id: messageId, ...faqMenu });
+        break;
+
+      // --- Главное меню ---
+      case 'main_menu':
+        if (userStates[chatId]?.step === 'manager_chat') {
+          await handleEndCommand(chatId);
+        }
+        await bot.deleteMessage(chatId, messageId).catch(() => {});
+        await bot.sendMessage(chatId, '🏠 Головне меню:\n\nОберіть опцію:', mainMenu);
+        break;
+
+      // --- Поиск, контакты, профиль ---
+      case 'contact_manager':
+        await bot.deleteMessage(chatId, messageId).catch(() => {});
+        await startPreFilter(chatId, query.from.first_name || 'Клієнт');
+        break;
+      case 'fill_profile':
+        await bot.deleteMessage(chatId, messageId).catch(() => {});
+        await startProfileCreation(chatId);
+        break;
+      case 'edit_profile':
+        await showEditOptions(chatId, messageId);
+        break;
+      case 'notification_settings':
+        await toggleNotifications(chatId, messageId);
+        break;
+      case 'show_profile':
+        await bot.deleteMessage(chatId, messageId).catch(() => {});
+        await showProfile(chatId);
+        break;
+      case 'edit_name':
+        userStates[chatId] = { step: 'profile_name' };
+        await bot.editMessageText('Введіть нове ім\'я:', { chat_id: chatId, message_id: messageId });
+        break;
+      case 'edit_phone':
+        userStates[chatId] = { step: 'profile_phone' };
+        await bot.editMessageText('Введіть новий номер телефону:', { chat_id: chatId, message_id: messageId });
+        break;
+
+      case 'edit_birthday': {
+        const profile = userProfiles[chatId];
+        const now = Date.now();
+        if (profile && profile.birthday_changed_at) {
+          const diff = now - profile.birthday_changed_at;
+          if (diff < 365 * 24 * 60 * 60 * 1000) {
+            const daysLeft = Math.ceil((365 * 24 * 60 * 60 * 1000 - diff) / (1000 * 60 * 60 * 24));
+            await bot.answerCallbackQuery(query.id, { text: `Змінити дату народження можна через ${daysLeft} дн.`, show_alert: true });
+            await bot.editMessageText(`🎂 Ви зможете змінити дату народження через ${daysLeft} дн.`, { chat_id: chatId, message_id: messageId });
+            break;
+          }
+        }
+        userStates[chatId] = { step: 'profile_birthday' };
+        await bot.editMessageText('Введіть нову дату народження (ДД.MM.YYYY):', { chat_id: chatId, message_id: messageId });
+        break;
+      }
+
+      // --- PROMO и PREFILTER ---
+      case 'filter_price':
+        await handlePriceFilter(chatId, messageId, query.from.first_name || 'Клієнт');
+        break;
+      case 'filter_delivery':
+        await handleDeliveryFilter(chatId, messageId);
+        break;
+      case 'filter_balloons':
+        await handleBalloonsFilter(chatId, messageId);
+        break;
+      case 'filter_event':
+        await handleEventFilter(chatId, messageId);
+        break;
+      case 'filter_urgent':
+        await connectClientToManager(chatId, messageId, query.from.first_name || 'Клієнт', 'Термінове питання');
+        break;
+      case 'filter_other':
+        await connectClientToManager(chatId, messageId, query.from.first_name || 'Клієнт', 'Інше питання');
+        break;
+
+      // ЗДЕСЬ ДОБАВЛЕНА ПЕРЕДАЧА ТЕМЫ для всех "Connect" кнопок
+      case 'connect_price':
+        await connectClientToManager(chatId, messageId, query.from.first_name || 'Клієнт', 'Питання про ціни');
+        break;
+      case 'connect_delivery':
+        await connectClientToManager(chatId, messageId, query.from.first_name || 'Клієнт', 'Питання про доставку');
+        break;
+      case 'connect_balloons':
+        await connectClientToManager(chatId, messageId, query.from.first_name || 'Клієнт', 'Вибір кульок');
+        break;
+      case 'connect_event':
+        await connectClientToManager(chatId, messageId, query.from.first_name || 'Клієнт', 'Оформлення свята');
+        break;
+
+
+      // Обработка выбора клиента из очереди менеджером
+      default: {
+        if (data.startsWith('client_chat_')) {
+          const clientIdToConnect = parseInt(data.split('_')[2]);
+          await startManagerChatWithClient(chatId, clientIdToConnect);
+        } else if (data && data.startsWith('promo_show_')) {
+          const key = data.split('_')[2];
+          const promo = activePromotions.find(p => String(p.created) === String(key));
+          if (!promo) {
+            await bot.sendMessage(chatId, 'Акція не знайдена.');
+            break;
+          }
+          await bot.sendMessage(chatId, `🎁 *${promo.title}*\n\n${promo.description}\n\n⏰ До: ${promo.endDate}`, { parse_mode: 'Markdown' });
+          break;
+        } else if (data && data.startsWith('promo_delete_')) {
+          const key = data.split('_')[2];
+          const idx = activePromotions.findIndex(p => String(p.created) === String(key));
+          if (idx === -1) {
+            await bot.sendMessage(chatId, 'Акцію не знайдено або вона вже видалена.');
+            break;
+          }
+          if (!isManager(chatId)) {
+            await bot.sendMessage(chatId, 'Тільки менеджери можуть видаляти акції.');
+            break;
+          }
+          const removed = activePromotions.splice(idx, 1)[0];
+          await bot.sendMessage(chatId, `🗑 Акцію "${removed.title}" видалено.`);
+          break;
+        } else {
+          break;
+        }
+      }
+    }
+  } catch (error) {
+    console.error('⚠ Callback error:', error);
+  }
+});
+
+// ========== ИСПРАВЛЕННАЯ ФУНКЦИЯ ПОДКЛЮЧЕНИЯ К МЕНЕДЖЕРУ ==========
+async function connectClientToManager(chatId, messageId, userName, topic = 'Без теми') {
+  waitingClients.add(chatId);
+  await notifyManagers(chatId, userName, topic); // ПЕРЕДАЕМ НОВЫЙ ПАРАМЕТР
+
+  await bot.editMessageText(
+    '⏳ Ваш запит передано менеджеру! Чекайте на відповідь.',
+    { chat_id: chatId, message_id: messageId }
+  );
+}
+
+// ========== НОВАЯ ФУНКЦИЯ УВЕДОМЛЕНИЯ МЕНЕДЖЕРОВ ==========
+async function notifyManagers(clientId, userName, topic) { // ДОБАВЛЕНО: topic
+  const clientProfile = userProfiles[clientId];
+  let clientInfo = `👤 Клієнт: ${userName} (ID: ${clientId})`;
+  if (clientProfile && clientProfile.name) {
+    clientInfo += `\n📝 Профіль: ${clientProfile.name}`;
+    if (clientProfile.phone) clientInfo += `\n📞 ${clientProfile.phone}`;
+  }
+  
+  // ЗДЕСЬ ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ТЕМЕ ВОПРОСА
+  const topicMessage = topic ? `\n\n📌 Тема запиту: *${topic}*` : '';
+
+  const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
+
+  if (freeManagers.length > 0) {
+    for (const managerId of freeManagers) {
+      if (!managerId) continue;
+      try {
+        await bot.sendMessage(managerId,
+          `🔔 НОВИЙ КЛІЄНТ!${topicMessage}\n\n${clientInfo}\n\nЩоб підключитися, оберіть його в меню **"📋 Клієнти"**.`
+        );
+      } catch (error) {
+        console.error(`Failed to notify manager ${managerId}:`, error.message);
+      }
+    }
+  } else {
+    for (const managerId of MANAGERS) {
+      if (!managerId) continue;
+      try {
+        await bot.sendMessage(managerId, `🔔 Новий клієнт в черзі!${topicMessage}\n\n${clientInfo}\n\n(Всі менеджери зайняті, клієнт чекає)`);
+      } catch (error) {
+        console.error(`Failed to notify manager ${managerId}:`, error.message);
+      }
+    }
+  }
+}
+
+async function startManagerChatWithClient(managerId, clientId) {
+  if (activeManagerChats[managerId]) {
+    await bot.sendMessage(managerId, '🛑 Ви вже в активному чаті. Завершіть його, щоб підключитися до іншого.');
+    return;
+  }
+
+  if (!waitingClients.has(clientId)) {
+    await bot.sendMessage(managerId, 'Клієнт уже не в черзі або його запит скасовано.');
+    return;
+  }
+
+  const managerName = getManagerName(managerId);
+
+  activeManagerChats[managerId] = clientId;
+  userStates[clientId] = { step: 'manager_chat', managerId: managerId };
+  waitingClients.delete(clientId);
+
+  await bot.sendMessage(managerId, `✅ Ви підключені до клієнта (${clientId}).`);
+  
+  // ИЗМЕНЁННАЯ СТРОКА: добавлено "Менеджер"
+  await bot.sendMessage(clientId, `👨‍💼 Менеджер ${managerName} підключився до чату!\nВін радий відповісти на ваші запитання.`, clientInChatMenu);
+
+  const welcomeMessage = 'Чим можу вам допомогти?';
+  await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
+  logMessage(managerId, clientId, welcomeMessage, 'manager');
+}
+
+// --- ИСПРАВЛЕННАЯ функция для отправки информации о товарах (открывается в Telegram) ---
+async function sendProductInfo(chatId, messageId, title, description, url) {
+  await bot.editMessageText(
+    `*${title}*\n\n${description}`,
+    {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔗 Переглянути на сайті', url }],
+          [{ text: '💬 Запитати менеджера', callback_data: 'contact_manager' }],
+          [{ text: '⬅️ Назад до каталогу', callback_data: 'catalog' }],
+          [{ text: '🏠 Головне меню', callback_data: 'main_menu' }]
+        ]
+      }
+    }
+  );
+}
+
+// ========== PROFILE FUNCTIONS ==========
+async function showProfile(chatId) {
+  const profile = userProfiles[chatId];
+  if (!profile || !profile.name) {
+    await bot.sendMessage(chatId,
+      '👤 Ваш профіль ще не заповнений.\n\nЗаповніть профіль, щоб отримувати персональні знижки та вітання!',
+      buildProfileMenu(chatId)
+    );
+    return;
+  }
+  const notificationStatus = profile.notifications ? '✅ Увімкнені' : '❌ Вимкнені';
+  const memberDays = Math.floor((Date.now() - profile.created) / (1000 * 60 * 60 * 24));
+  let profileText = `👤 *Ваш профіль:*\n\n`;
+  profileText += `📝 Ім'я: ${profile.name}\n`;
+  profileText += `📞 Телефон: ${profile.phone || 'не вказано'}\n`;
+  profileText += `🎂 День народження: ${profile.birthday || 'не вказано'}\n`;
+  profileText += `🔔 Сповіщення: ${notificationStatus}\n`;
+  profileText += `📅 З нами: ${memberDays} днів\n`;
+  const today = new Date();
+  const nextHoliday = getNextHoliday(today);
+  if (nextHoliday) {
+    profileText += `\n🎊 Найближче свято: ${nextHoliday.name} ${nextHoliday.emoji} (${nextHoliday.displayDate})`;
+  }
+  if (activePromotions.length > 0) {
+    profileText += '\n\n🎁 *Активні акції:*\n';
+    activePromotions.forEach(promo => {
+      profileText += `• ${promo.title}\n`;
+    });
+  }
+  await bot.sendMessage(chatId, profileText, {
+    parse_mode: 'Markdown',
+    ...buildProfileMenu(chatId)
+  });
+}
+
+async function startProfileCreation(chatId) {
+  userStates[chatId] = { step: 'profile_name' };
+  await bot.sendMessage(chatId,
+    '📝 Давайте заповнимо ваш профіль!\n\nКрок 1/3: Як вас звати?'
+  );
+}
+
+async function handleProfileInput(chatId, text, step) {
+  if (!userProfiles[chatId]) {
+    userProfiles[chatId] = {
+      created: Date.now(),
+      notifications: true,
+      holidayNotifications: []
+    };
+  }
+  switch (step) {
+    case 'profile_name':
+      userProfiles[chatId].name = text;
+      userStates[chatId].step = 'profile_phone';
+      await bot.sendMessage(chatId,
+        '📞 Крок 2/3: Введіть ваш номер телефону:\n(формат: +380XXXXXXXXX)'
+      );
+      break;
+    case 'profile_phone':
+      const phoneRegex = /^(\+380|380|0)?[0-9]{9}$/;
+      if (!phoneRegex.test(text.replace(/[\s\-\(\)]/g, ''))) {
+        await bot.sendMessage(chatId,
+          '❌ Невірний формат номера.\nСпробуйте ще раз (приклад: +380501234567):'
+        );
+        return;
+      }
+      userProfiles[chatId].phone = text;
+      userStates[chatId].step = 'profile_birthday';
+      await bot.sendMessage(chatId,
+        '🎂 Крок 3/3: Введіть дату вашого народження:\n(формат: ДД.MM.YYYY, приклад: 15.03.1990)'
+      );
+      break;
+    case 'profile_birthday': {
+      const dateRegex = /^(\d{2})\.(\d{2})\.(\d{4})$/;
+      if (!dateRegex.test(text)) {
+        await bot.sendMessage(chatId,
+          '❌ Невірний формат дати.\nСпробуйте ще раз (приклад: 15.03.1990):'
+        );
+        return;
+      }
+      const profile = userProfiles[chatId];
+      const now = Date.now();
+      if (profile.birthday_changed_at && (now - profile.birthday_changed_at) < 365 * 24 * 60 * 60 * 1000) {
+        const daysLeft = Math.ceil((365 * 24 * 60 * 60 * 1000 - (now - profile.birthday_changed_at)) / (1000 * 60 * 60 * 24));
+        await bot.sendMessage(chatId, `⛔ Змінити дату народження можна через ${daysLeft} дн.`);
+        delete userStates[chatId];
+        return;
+      }
+      userProfiles[chatId].birthday = text;
+      userProfiles[chatId].birthday_changed_at = Date.now();
+      delete userStates[chatId];
+      await bot.sendMessage(chatId,
+        '✅ Профіль успішно створено!\n\nТепер ви будете отримувати:\n• 🎁 Персональні знижки\n• 🎂 Вітання з днем народження\n• 🎊 Спеціальні пропозиції до свят',
+        mainMenu
+      );
+      break;
+    }
+  }
+}
+
+async function showEditOptions(chatId, messageId) {
+  const editMenu = {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '📝 Змінити ім\'я', callback_data: 'edit_name' }],
+        [{ text: '📞 Змінити телефон', callback_data: 'edit_phone' }],
+        [{ text: '🎂 Змінити дату народження', callback_data: 'edit_birthday' }],
+        [{ text: '⬅️ Назад', callback_data: 'show_profile' }]
+      ]
+    }
+  };
+  await bot.editMessageText(
+    '✏️ Що бажаєте змінити?',
+    { chat_id: chatId, message_id: messageId, ...editMenu }
+  );
+}
+
+async function toggleNotifications(chatId, messageId) {
+  if (!userProfiles[chatId]) {
+    userProfiles[chatId] = { notifications: false, created: Date.now(), holidayNotifications: [] };
+  }
+  userProfiles[chatId].notifications = !userProfiles[chatId].notifications;
+  const status = userProfiles[chatId].notifications ? 'увімкнені' : 'вимкнені';
+  await bot.editMessageText(
+    `🔔 Сповіщення ${status}!`,
+    { chat_id: chatId, message_id: messageId }
+  );
+  setTimeout(() => showProfile(chatId), 2000);
+}
+
+// ========== HOLIDAY HELPERS ==========
+function parseDayMonth(dateStr) {
+  const [d, m] = dateStr.split('.').map(s => parseInt(s, 10));
+  return { d, m };
+}
+function getNextHoliday(fromDate = new Date()) {
+  const currentYear = fromDate.getFullYear();
+  const candidates = holidays.map(h => {
+    const { d, m } = parseDayMonth(h.date);
+    let dt = new Date(currentYear, m - 1, d);
+    if (dt < fromDate) {
+      dt = new Date(currentYear + 1, m - 1, d);
+    }
+    return { holiday: h, dateObj: dt };
+  });
+  candidates.sort((a, b) => a.dateObj - b.dateObj);
+  const next = candidates[0];
+  if (!next) return null;
+  const displayDate = `${next.dateObj.getDate().toString().padStart(2, '0')}.${(next.dateObj.getMonth()+1).toString().padStart(2, '0')}.${next.dateObj.getFullYear()}`;
+  return { name: next.holiday.name, emoji: next.holiday.emoji, displayDate, dateStr: next.holiday.date };
+}
+
+// ========== PROMOTION FUNCTIONS ==========
+async function startPromotionCreation(managerId) {
+  userStates[managerId] = { step: 'promo_title' };
+  await bot.sendMessage(managerId,
+    '🎁 Створення нової акції\n\nКрок 1/3: Введіть назву акції:'
+  );
+}
+
+async function handlePromotionInput(managerId, text, step) {
+  if (!userStates[managerId].promoData) {
+    userStates[managerId].promoData = {};
+  }
+  switch (step) {
+    case 'promo_title':
+      userStates[managerId].promoData.title = text;
+      userStates[managerId].step = 'promo_description';
+      await bot.sendMessage(managerId,
+        'Крок 2/3: Введіть опис акції:'
+      );
+      break;
+    case 'promo_description':
+      userStates[managerId].promoData.description = text;
+      userStates[managerId].step = 'promo_enddate';
+      await bot.sendMessage(managerId,
+        'Крок 3/3: Введіть дату закінчення акції (ДД.MM.YYYY):'
+      );
+      break;
+    case 'promo_enddate':
+      const dateRegex = /^(\d{2})\.(\d{2})\.(\d{4})$/;
+      if (!dateRegex.test(text)) {
+        await bot.sendMessage(managerId,
+          '❌ Невірний формат дати. Спробуйте ще раз (приклад: 31.12.2024):'
+        );
+        return;
+      }
+
+      const parts = text.split('.');
+      const day = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1; // месяц в JS с 0
+      const year = parseInt(parts[2], 10);
+      const endDateObj = new Date(year, month, day);
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      if (endDateObj < today) {
+        await bot.sendMessage(managerId,
+          '❌ Дата закінчення акції не може бути в минулому. Спробуйте ще раз:'
+        );
+        return;
+      }
+
+      const promo = {
+        ...userStates[managerId].promoData,
+        endDate: text,
+        created: Date.now(),
+        createdBy: managerId
+      };
+      activePromotions.push(promo);
+      delete userStates[managerId];
+      await bot.sendMessage(managerId,
+        `✅ Акція створена!\n\n📋 ${promo.title}\n📝 ${promo.description}\n⏰ До: ${promo.endDate}`,
+        managerMenu
+      );
+      await notifyClientsAboutPromotion(promo);
+      break;
+  }
+}
+
+async function showPromotionsList(managerId) {
+  const promos = activePromotions.slice();
+  if (!promos.length) {
+    await bot.sendMessage(managerId, 'На даний момент активних акцій немає.', {
+      reply_markup: {
+        keyboard: [['🎁 Створити акцію', '📋 Клієнти']],
+        resize_keyboard: true
+      }
+    });
+    return;
+  }
+
+  await bot.sendMessage(managerId, '📋 *Активні акції:*', { parse_mode: 'Markdown' });
+
+  for (const promo of promos) {
+    const text = `🎁 *${promo.title}*\n\n${promo.description}\n\n⏰ До: ${promo.endDate}`;
+    const kb = [];
+    kb.push([{ text: '🗑 Видалити акцію', callback_data: `promo_delete_${promo.created}` }]);
+
+    await bot.sendMessage(managerId, text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: kb } });
+  }
+
+  await bot.sendMessage(managerId, 'Виберіть акцію для видалення або поверніться в головне меню.', managerMenu);
+}
+
+async function notifyClientsAboutPromotion(promo) {
+  let notifiedCount = 0;
+  for (const [chatId, profile] of Object.entries(userProfiles)) {
+    if (profile.notifications && profile.name) {
+      try {
+        await bot.sendMessage(chatId,
+          `🎁 *Нова акція в MagicAir!*\n\n${promo.title}\n\n${promo.description}\n\n⏰ Діє до: ${promo.endDate}\n\n🛒 Встигніть скористатися!`,
+          { parse_mode: 'Markdown' }
+        );
+        notifiedCount++;
+      } catch (error) {
+        console.log(`Failed to notify ${chatId}:`, error.message);
+      }
+    }
+  }
+  console.log(`✅ Notified ${notifiedCount} clients about new promotion`);
+}
+
+// ========== HELPER FUNCTIONS ==========
+async function sendContacts(chatId) {
+  const contactText = `📞 Контакти MagicAir:
+
+☎️ Телефони:
+• (063) 233-33-03
+• (095) 634-63-64
+
+📱 Месенджери:
+• Telegram: @MagicAirKiev
+• Instagram: magic_air.kiev
+
+📍 Магазини:
+• Теремки: Метрологічна 13
+• Оболонь: Героїв полку Азов 24/10
+
+🌍 Сайт: magicair.com.ua
+🚚 Доставка 24/7 по Києву та області`;
+
+  await bot.sendMessage(chatId, contactText, mainMenu);
+}
+
+async function sendInteractiveFAQ(chatId) {
+  await bot.sendMessage(chatId,
+    '❓ Часті питання:\n\nОберіть тему, яка вас цікавить:',
+    faqMenu
+  );
+}
+
+async function handleSearch(chatId, query) {
+  await bot.sendMessage(chatId, '🔍 Шукаємо...');
+
+  const searchUrl = `https://magicair.com.ua/katalog/search/?q=${encodeURIComponent(query)}`;
+
+  await bot.sendMessage(chatId,
+    `🔍 Результати пошуку "${query}":`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔍 Результати пошуку', url: searchUrl }],
+          [{ text: '💬 Запитати менеджера', callback_data: 'contact_manager' }],
+          [{ text: '🏠 Головне меню', callback_data: 'main_menu' }]
+        ]
+      }
+    }
+  );
+}
+
+// ========== ИСПРАВЛЕННЫЕ ФУНКЦИИ МЕНЕДЖЕРА ==========
+async function forwardToManager(clientId, text, userName) {
+  const managerId = userStates[clientId]?.managerId;
+  const managerName = getManagerName(managerId);
+  if (managerId && activeManagerChats[managerId] === clientId) {
+    await bot.sendMessage(managerId, `👤 ${userName} (${clientId}): ${text}`);
+    logMessage(clientId, managerId, text, 'client');
+  } else {
+    await bot.sendMessage(clientId, '⚠ З\'єднання з менеджером втрачено. Спробуйте ще раз.', mainMenu);
+    delete userStates[clientId];
+  }
+}
+
+async function forwardToClient(clientId, text) {
+  const managerId = userStates[clientId]?.managerId;
+  const managerName = getManagerName(managerId);
+  await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${text}`);
+}
+
+async function handleEndCommand(chatId) {
+  if (userStates[chatId]?.step === 'manager_chat') {
+    const managerId = userStates[chatId].managerId;
+    const managerName = getManagerName(managerId);
+    if (activeManagerChats[managerId] === chatId) {
+      delete activeManagerChats[managerId];
+      await bot.sendMessage(managerId, `✅ Клієнт завершив чат.`, managerMenu);
+    }
+    delete userStates[chatId];
+    await bot.sendMessage(chatId, '✅ Чат завершено.', mainMenu);
+  } else if (isManager(chatId)) {
+    await endManagerChat(chatId);
+  }
+}
+
+async function endManagerChat(managerId) {
+  const clientId = activeManagerChats[managerId];
+  if (clientId) {
+    delete activeManagerChats[managerId];
+    delete userStates[clientId];
+    await bot.sendMessage(clientId, '✅ Менеджер завершив чат.', mainMenu);
+  }
+  await bot.sendMessage(managerId, '✅ Чат завершено.', managerMenu);
+}
+
+async function showClientsList(managerId) {
+  let clientsList = '📋 КЛІЄНТИ:\n\n';
+  const waitingClientsList = Array.from(waitingClients);
+
+  const hasClients = waitingClientsList.length > 0 || Object.keys(activeManagerChats).length > 0;
+
+  if (!hasClients) {
+    clientsList += '🔭 Немає активних клієнтів';
+    await bot.sendMessage(managerId, clientsList, managerMenu);
+    return;
+  }
+
+  if (waitingClientsList.length > 0) {
+    clientsList += '⏳ *ОЧІКУЮТЬ:*\n';
+    const inlineKeyboard = waitingClientsList.map(clientId => {
+      const profile = userProfiles[clientId];
+      const name = profile && profile.name ? ` (${profile.name})` : '';
+      return [{ text: `💬 Клієнт ${clientId}${name}`, callback_data: `client_chat_${clientId}` }];
+    });
+
+    await bot.sendMessage(managerId, clientsList, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: inlineKeyboard
+      }
+    });
+  }
+
+  if (Object.keys(activeManagerChats).length > 0) {
+    let activeChatsText = '\n💬 *АКТИВНІ ЧАТИ:*\n';
+    for (const [mgrId, clientId] of Object.entries(activeManagerChats)) {
+      const profile = userProfiles[clientId];
+      const name = profile && profile.name ? ` (${profile.name})` : '';
+      const managerName = getManagerName(mgrId);
+      activeChatsText += `• ${managerName} ↔ Клієнт ${clientId}${name}\n`;
+    }
+    await bot.sendMessage(managerId, activeChatsText, { parse_mode: 'Markdown' });
+  }
+}
+
+async function showMessageLog(managerId) {
+  let logText = '📄 ЖУРНАЛ ПОВІДОМЛЕНЬ:\n\n';
+
+  if (messageLog.length === 0) {
+    logText += 'Журнал порожній';
+  } else {
+    const recentMessages = messageLog.slice(-10);
+    for (const msg of recentMessages) {
+      const date = new Date(msg.timestamp).toLocaleString('uk-UA');
+      const type = msg.type === 'manager' ? '👨‍💼' : '👤';
+      const fromName = msg.type === 'manager' ? getManagerName(msg.from) : `Клієнт (${msg.from})`;
+      logText += `${type} ${fromName} → ${msg.to}\n`;
+      logText += `📝 ${msg.message}\n`;
+      logText += `🕐 ${date}\n\n`;
+    }
+  }
+
+  await bot.sendMessage(managerId, logText, managerMenu);
+}
+
+async function showStats(managerId) {
+  const stats = `📊 СТАТИСТИКА:
+
+👥 Профілів: ${Object.keys(userProfiles).length}
+🎁 Активних акцій: ${activePromotions.length}
+⏳ Клієнтів в очікуванні: ${waitingClients.size}
+💬 Активних чатів: ${Object.keys(activeManagerChats).length}
+📝 Записів в журналі: ${messageLog.length}
+
+👨‍💼 Менеджери: ${Object.values(MANAGERS_DATA).join(', ')}`;
+
+  await bot.sendMessage(managerId, stats, managerMenu);
+}
+
+// ========== PREFILTER FUNCTIONS ==========
+async function startPreFilter(chatId, userName) {
+  await bot.sendMessage(chatId,
+    `💬 ${userName}, щоб швидше вам допомогти, оберіть тему вашого питання:`,
+    prefilterMenu
+  );
+}
+
+async function handlePriceFilter(chatId, messageId, userName) {
+  await bot.editMessageText(
+    '💰 Питання про ціни:\n\nЗв\'яжіться з менеджером для детальної консультації',
+    {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '💬 Зв\'язатися з менеджером', callback_data: 'connect_price' }],
+          [{ text: '🏠 Головне меню', callback_data: 'main_menu' }]
+        ]
+      }
+    }
+  );
+}
+
+async function handleDeliveryFilter(chatId, messageId) {
+  await bot.editMessageText(
+    '🚚 Питання про доставку:\n\nЗв\'яжіться з менеджером для уточнення деталей',
+    {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '💬 Зв\'язатися з менеджером', callback_data: 'connect_delivery' }],
+          [{ text: '📋 FAQ про доставку', callback_data: 'faq_delivery' }],
+          [{ text: '🏠 Головне меню', callback_data: 'main_menu' }]
+        ]
+      }
+    }
+  );
+}
+
+async function handleBalloonsFilter(chatId, messageId) {
+  await bot.editMessageText(
+    '🎈 Вибір кульок:\n\nЗв\'яжіться з менеджером для консультації по вибору',
+    {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '💬 Зв\'язатися з менеджером', callback_data: 'connect_balloons' }],
+          [{ text: '🛒 Переглянути каталог', callback_data: 'catalog' }],
+          [{ text: '🏠 Головне меню', callback_data: 'main_menu' }]
+        ]
+      }
+    }
+  );
+}
+
+async function handleEventFilter(chatId, messageId) {
+  await bot.editMessageText(
+    '🎉 Оформлення свята:\n\nЗв\'яжіться з менеджером для консультації по декору',
+    {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '💬 Зв\'язатися з менеджером', callback_data: 'connect_event' }],
+          [{ text: '🎁 Готові набори', callback_data: 'cat_sets' }],
+          [{ text: '🏠 Головне меню', callback_data: 'main_menu' }]
+        ]
+      }
+    }
+  );
+}
+
+// ========== НОВАЯ ФУНКЦИЯ ДЛЯ УМНЫХ ОТВЕТОВ AI ==========
+async function handleGeneralMessage(chatId, text, userName) {
+  // Эта функция будет вызываться, когда клиент отправляет любой текст,
+  // который не является командой или частью диалога с менеджером.
+
+  // 1. Проверяем, есть ли подключение к OpenAI
+  if (openai) {
+    // 2. Создаем промпт с инструкциями для AI
+    const systemPrompt = `Ти — розумний і доброзичливий помічник магазину повітряних кульок "MagicAir".
+Твоя мета — відповідати на запитання клієнтів, використовуючи надану інформацію.
+Відповідай завжди тільки українською мовою.
+Будь лаконічним і ввічливим. Якщо ти не знаєш відповіді або запитання не стосується нашої діяльності, ввічливо запропонуй клієнту зв'язатися з менеджером.
+
+### Інформація для відповідей:
+* Наш сайт: https://magicair.com.ua
+* Наші магазини: Теремки (вул. Метрологічна 13) та Оболонь (вул. Героїв полку Азов 24/10).
+* Доставка працює 24/7 по Києву та області. Вартість за тарифами таксі.
+* Латексні кульки з обробкою Hi-Float літають від 5 до 20 днів. Фольговані кульки тримаються від 6 до 30 днів.
+* Ми приймаємо оплату онлайн, за реквізитами або при самовивозі.
+* Наші контакти: (063) 233-33-03.
+* Ми створюємо букети з кульок, сюрприз-коробки, фотозони, композиції для гендер-паті та інших свят.
+
+### Запитання клієнта:
+`;
+
+    try {
+      // 3. Отправляем промпт и вопрос клиента в OpenAI
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o", // Рекомендуемая модель для лучших результатов
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: text }
+        ]
+      });
+
+      // 4. Получаем ответ от AI
+      const aiResponse = completion.choices[0].message.content;
+      await bot.sendMessage(chatId, aiResponse);
+      return; // Завершаем выполнение функции, чтобы не выводить стандартное сообщение
+    } catch (error) {
+      console.error('⚠️ Помилка OpenAI:', error);
+      // Если возникла ошибка (например, нет ключа или баланса), переходим к стандартному сообщению
+    }
+  }
+
+  // 5. Если OpenAI не подключен или произошла ошибка, выводим стандартный ответ
+  await bot.sendMessage(chatId,
+    'Дякую за повідомлення! Для детальної консультації оберіть "💬 Менеджер" в меню.',
+    mainMenu
+  );
+}
+
+// ========== FAQ FUNCTIONS ==========
+async function sendDeliveryInfo(chatId, messageId) {
+  const keyboard = {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '📋 Детальна інформація', url: 'https://magicair.com.ua/oplata-i-dostavka/' }],
+        [{ text: '💬 Питання менеджеру', callback_data: 'filter_delivery' }],
+        [{ text: '⬅️ Назад до FAQ', callback_data: 'faq_back' }]
+      ]
+    }
+  };
+
+  await bot.editMessageText(
+    `🚚 ДОСТАВКА ТА ОПЛАТА:
+
+💳 СПОСОБИ ОПЛАТИ:
+• Google Pay, Apple Pay - онлайн оплата на сайті
+• IBAN - оплата за реквізитами
+• При отриманні в магазині (самовивіз)
+
+🚚 ДОСТАВКА:
+• 24/7 по Києву та області
+• Через службу такси (Bolt/Uklon)
+• Ми викликаємо таксі та надсилаємо посилання для відстеження авто.
+• Оплата доставки за ваш рахунок по тарифу
+
+🛒 САМОВИВІЗ:
+📍 Теремки (Метрологічна 13):
+   • Доставка з магазину: 06:00-24:00
+   • Самовивіз онлайн замовлень: 24/7
+
+📍 Оболонь (Героїв полку Азов 24/10):
+   • Доставка з магазину: 09:00-20:00
+   • Самовивіз: 09:00-19:00
+
+⚠️ ВАЖЛИВО:
+• Всі замовлення запускаються в роботу після повної оплати
+• Час очікування готовності: до 90 хвилин`,
+    { chat_id: chatId, message_id: messageId, ...keyboard }
+  );
+}
+
+async function sendBalloonsInfo(chatId, messageId) {
+  const keyboard = {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🛒 Переглянути каталог', callback_data: 'catalog' }],
+        [{ text: '💬 Консультація з вибору', callback_data: 'filter_balloons' }],
+        [{ text: '⬅️ Назад до FAQ', callback_data: 'faq_back' }]
+      ]
+    }
+  };
+
+  await bot.editMessageText(
+    `🎈 ПРО КУЛІ ТА ГЕЛІЙ:
+
+⏱️ СКІЛЬКИ ЛЕТЯТЬ:
+• Латексні: оброблені Hi-Float 5-20 днів
+• Фольговані: 7-40 днів
+• Можна повторно надути фольговані
+
+📏 РОЗМІРИ ТА ЦІНИ:
+• Латексні 12"(30см): 80-110 грн
+• Латексні 12" з малюнком: 90-120 грн
+• Латексні 12"з конфеті: 115 грн
+• Фольговані цифри: 385-590 грн
+• Фольговані фігури: 350-900 грн
+• Баблс з написом: 800-1600 грн
+
+🎨 ВИДИ ЛАТЕКСНИХ:
+• Пастельні (матові непрозорі)
+• Металік (з перламутровим блиском)
+• З конфеті всередині
+• З малюнками та написами
+• Хромовані (насичені металеві кольори)
+
+✨ ФОЛЬГОВАНІ:
+• Цифри різних розмірів
+• Фігури персонажів та тварин
+• Ходячі фігури
+• Серця та зірки`,
+    { chat_id: chatId, message_id: messageId, ...keyboard }
+  );
+}
+
+async function sendOrdersInfo(chatId, messageId) {
+  const keyboard = {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🛒 Замовити на сайті', url: 'https://magicair.com.ua' }],
+        [{ text: '⬅️ Назад до FAQ', callback_data: 'faq_back' }]
+      ]
+    }
+  };
+
+  await bot.editMessageText(
+    `📅 ЗАМОВЛЕННЯ ТА ТЕРМІНИ:
+
+⏰ КОЛИ МОЖНА ЗАМОВИТИ:
+• Онлайн на сайті: 24/7
+• Телефоном: (063) 233-33-03 з 09:00 до 21:00
+• Telegram: @MagicAirKiev з 08:00 до 22:00
+
+💰 ОПЛАТА:
+• Google Pay, Apple Pay - онлайн на сайті
+• IBAN - за реквізитами
+• При самовивозі в магазині
+
+📋 ЩО ПОТРІБНО ЗНАТИ:
+• Точна адреса доставки
+• Бажаний час доставки
+• Номер телефону
+• Побажання до оформлення
+
+⚠️ ВАЖЛИВО:
+• Замовлення запускається після повної оплати
+• Час підготовки: до 60 хвилин
+• Можлива доставка до дверей`,
+    { chat_id: chatId, message_id: messageId, ...keyboard }
+  );
+}
+
+async function sendDecorationInfo(chatId, messageId) {
+  const keyboard = {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🎁 Готові набори', callback_data: 'cat_sets' }],
+        [{ text: '💬 Індивідуальне оформлення', callback_data: 'filter_event' }],
+        [{ text: '⬅️ Назад до FAQ', callback_data: 'faq_back' }]
+      ]
+    }
+  };
+
+  await bot.editMessageText(
+    `🎁 ОФОРМЛЕННЯ ТА ДЕКОР:
+
+🎉 ЯКІ ПОДІЇ ОФОРМЛЯЄМО:
+• Дні народження (діти/дорослі)
+• Весілля та річниці
+• Випускні та корпоративи
+• Гендер-паті та baby shower
+• Романтичні сюрпризи
+
+🎈 ВИДИ ОФОРМЛЕННЯ:
+• Букети з кульок (695-11670 грн)
+• Арки та гірлянди
+• Фотозони та декор
+• Тематичні композиції
+
+📸 ФОТОЗОНА:
+• Фотозона з повітряних кульок
+• Тематичне оформлення
+• Додаткові аксесуари
+
+💡 ПОПУЛЯРНІ ІДЕЇ:
+• Фольговані цифри
+• Різнокаліберні гірлянди та арки
+• Сюрприз-бокси з кульками та персональним написом
+• Персоналізовані композиції
+
+🏠 ВИЇЗД НА МІСЦЕ:
+• Оформлення на місці
+• Професійні декоратори
+• Весь необхідний інструмент`,
+    { chat_id: chatId, message_id: messageId, ...keyboard }
+  );
+}
+
+async function sendContactsInfo(chatId, messageId) {
+  const keyboard = {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '💬 Telegram', url: 'https://t.me/MagicAirKiev' }],
+        [{ text: '📸 Instagram', url: 'https://www.instagram.com/magic_air.kiev/' }],
+        [{ text: '⬅️ Назад до FAQ', callback_data: 'faq_back' }]
+      ]
+    }
+  };
+
+  await bot.editMessageText(
+    `📞 КОНТАКТИ ТА РЕЖИМ РОБОТИ:
+
+☎️ ТЕЛЕФОНИ:
+• (063) 233-33-03
+• (095) 634-63-64
+
+📱 МЕСЕНДЖЕРИ:
+• Telegram: @MagicAirKiev
+• Instagram: magic_air.kiev
+
+🛒 МАГАЗИНИ:
+
+📍 ТЕРЕМКИ (Метрологічна 13):
+• Доставка з магазину: 06:00-24:00
+• Самовивіз онлайн замовлень: 24/7
+
+📍 ОБОЛОНЬ (Героїв полку Азов 24/10):
+• Доставка з магазину: 09:00-20:00
+• Самовивіз: 09:00-19:00
+
+🌍 ОНЛАЙН:
+• Сайт: magicair.com.ua
+• Замовлення онлайн: 24/7
+• Доставка: по Києву та області
+
+🎈 ОСОБЛИВОСТІ:
+• Цілодобова видача онлайн замовлень на Теремках
+• Фотозвіт роботи для отримувача
+• Індивідуальні написи на кулях`,
+    { chat_id: chatId, message_id: messageId, ...keyboard }
+  );
+}
+
+// ========== BIRTHDAY/HOLIDAY FUNCTIONS ==========
+async function checkBirthdays() {
+  const today = new Date();
+  const todayStr = `${today.getDate().toString().padStart(2, '0')}.${(today.getMonth() + 1).toString().padStart(2, '0')}`;
+  const currentYear = today.getFullYear();
+
+  for (const [chatId, profile] of Object.entries(userProfiles)) {
+    if (!profile.birthday || !profile.notifications) continue;
+
+    const birthdayParts = profile.birthday.split('.');
+    if (birthdayParts.length < 2) continue;
+    const birthdayStr = `${birthdayParts[0]}.${birthdayParts[1]}`;
+
+    if (birthdayStr === todayStr) {
+      const lastGreetingYear = profile.lastBirthdayGreeting ? new Date(profile.lastBirthdayGreeting).getFullYear() : 0;
+
+      if (lastGreetingYear < currentYear) {
+        try {
+          await bot.sendMessage(chatId,
+            `🎉🎂 *З Днем Народження, ${profile.name}!* 🎂🎉\n\n` +
+            `MagicAir вітає вас з цим чудовим днем!\n\n` +
+            `🎁 Спеціально для вас - знижка 10% на всі товари!\n` +
+            `Промокод: BIRTHDAY\n\n` +
+            `Дійсний протягом 7 днів. Встигніть скористатися!`,
+            { parse_mode: 'Markdown' }
+          );
+
+          userProfiles[chatId].lastBirthdayGreeting = Date.now();
+
+        } catch (error) {
+          console.log(`Failed to send birthday greeting to ${chatId}:`, error.message);
+        }
+      }
+    }
+  }
+}
+
+async function checkHolidays() {
+  const today = new Date();
+  const todayStr = `${today.getDate().toString().padStart(2, '0')}.${(today.getMonth() + 1).toString().padStart(2, '0')}`;
+  const currentYear = today.getFullYear();
+
+  const todayHoliday = holidays.find(h => {
+    const hh = `${h.date}`;
+    return hh === `${todayStr}`;
+  });
+  if (todayHoliday) {
+    await sendHolidayGreeting(todayHoliday, 'today');
+  }
+
+  const threeDaysLater = new Date(today);
+  threeDaysLater.setDate(today.getDate() + 3);
+  const threeDaysStr = `${threeDaysLater.getDate().toString().padStart(2, '0')}.${(threeDaysLater.getMonth() + 1).toString().padStart(2, '0')}`;
+
+  const upcomingHoliday = holidays.find(h => h.date === threeDaysStr);
+  if (upcomingHoliday) {
+    await sendHolidayGreeting(upcomingHoliday, 'reminder');
+  }
+}
+
+async function sendHolidayGreeting(holiday, type) {
+  for (const [chatId, profile] of Object.entries(userProfiles)) {
+    if (!profile.notifications || !profile.name) continue;
+
+    const currentYear = new Date().getFullYear();
+    const holidayKey = `${holiday.date}_${currentYear}_${type}`;
+
+    if (!profile.holidayNotifications) {
+      profile.holidayNotifications = [];
+    }
+
+    if (profile.holidayNotifications.includes(holidayKey)) {
+      continue;
+    }
+
+    try {
+      let message;
+      if (type === 'today') {
+        message = `${holiday.emoji} *${holiday.name}!* ${holiday.emoji}\n\n` +
+                 `MagicAir вітає вас зі святом!\n\n` +
+                 `🎁 Сьогодні діють знижки до 10% в наших магазинах!\n\n` +
+                 `Завітайте до нас за святковим настроєм! 🎈`;
+      } else {
+        message = `🗓 *Через 3 дні ${holiday.name}!* ${holiday.emoji}\n\n` +
+                 `Не забудьте підготуватися до свята!\n\n` +
+                 `🎈 У MagicAir великий вибір святкового декору.\n` +
+                 `Замовляйте заздалегідь!`;
+      }
+
+      await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+
+      profile.holidayNotifications.push(holidayKey);
+
+    } catch (error) {
+      console.log(`Failed to send holiday greeting to ${chatId}:`, error.message);
+    }
+  }
+}
+
+// ========== AUTO-SAVE DATA ==========
+function saveData() {
+  try {
+    const data = {
+      userProfiles,
+      activePromotions,
+      messageLog,
+      timestamp: Date.now()
+    };
+    fs.writeFileSync('bot_data.json', JSON.stringify(data, null, 2));
+    console.log('💾 Data saved');
+  } catch (error) {
+    console.error('Failed to save data:', error);
+  }
+}
+
+function loadData() {
+  try {
+    if (fs.existsSync('bot_data.json')) {
+      const data = JSON.parse(fs.readFileSync('bot_data.json', 'utf8'));
+      Object.assign(userProfiles, data.userProfiles || {});
+      activePromotions.push(...(data.activePromotions || []));
+      messageLog.push(...(data.messageLog || []));
+      console.log('💾 Data loaded successfully');
+    }
+  } catch (error) {
+    console.error('Failed to load data:', error);
+  }
+}
+
+// ========== LOGGING ==========
+function logMessage(from, to, message, type) {
+  messageLog.push({
+    from,
+    to,
+    message: message.substring(0, 100),
+    type,
+    timestamp: Date.now()
+  });
+
+  const MAX_LOG_SIZE = 500;
+  if (messageLog.length > MAX_LOG_SIZE) {
+    messageLog.splice(0, messageLog.length - MAX_LOG_SIZE);
+  }
+}
+
+// ========== AUTO-STARTUP & SHUTDOWN ==========
+loadData();
+setInterval(saveData, 5 * 60 * 1000);
+
+let birthdayCheckInterval = null;
+function startDailyChecks() {
+  if (birthdayCheckInterval) return;
+
+  birthdayCheckInterval = setInterval(() => {
+    const now = new Date();
+    if (now.getMinutes() === 0) {
+      checkBirthdays();
+      checkHolidays();
+    }
+  }, 60 * 60 * 1000);
+
+  const now = new Date();
+  if (now.getMinutes() === 0) {
+    checkBirthdays();
+    checkHolidays();
+  }
+}
+startDailyChecks();
+
+setInterval(() => {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  const updatedPromotions = activePromotions.filter(promo => {
+    try {
+      const endParts = promo.endDate.split('.');
+      const endDate = new Date(endParts[2], endParts[1] - 1, endParts[0]);
+      return endDate.getTime() >= now.getTime();
+    } catch (e) {
+      console.error(`Error parsing promotion date for promo: ${promo.title}`, e);
+      return false;
+    }
+  });
+
+  activePromotions.length = 0;
+  activePromotions.push(...updatedPromotions);
+  saveData();
+
+}, 24 * 60 * 60 * 1000);
+
+process.on('SIGINT', () => {
+  console.log('\n🛑 Shutting down gracefully...');
+  saveData();
+  bot.stopPolling();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n🛑 Shutting down gracefully...');
+  saveData();
+  bot.stopPolling();
+  process.exit(0);
+});
+
+console.log('✅ MagicAir бот запущено!');
