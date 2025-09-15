@@ -460,7 +460,7 @@ bot.on('callback_query', async (query) => {
         break;
       case 'latex_bow':
         await sendProductInfo(chatId, messageId,
-          '🎀 Кулі з бантиками',
+          '🎀 Кулі з бантиками від 175грн',
           'Елегантні кулі з атласними бантиками.',
           'https://magicair.com.ua/heliievi-kulky-z-bantykamy/'
         );
@@ -1054,8 +1054,7 @@ async function sendContacts(chatId) {
 • (063) 233-33-03
 • (095) 634-63-64
 
-📱 Месенджери:
-• Telegram: @MagicAirKiev
+📱 Наш Instagram:
 • Instagram: magic_air.kiev
 
 📍 Магазини:
@@ -1758,6 +1757,7 @@ process.on('SIGTERM', () => {
 
 
 console.log('✅ MagicAir бот запущено!');
+
 
 
 
