@@ -1510,7 +1510,6 @@ async function sendContactsInfo(chatId, messageId) {
   const keyboard = {
     reply_markup: {
       inline_keyboard: [
-        [{ text: '💬 Telegram', url: 'https://t.me/MagicAirKiev' }],
         [{ text: '📸 Instagram', url: 'https://www.instagram.com/magic_air.kiev/' }],
         [{ text: '⬅️ Назад до FAQ', callback_data: 'faq_back' }]
       ]
@@ -1756,6 +1755,7 @@ process.on('SIGTERM', () => {
 
 
 console.log('✅ MagicAir бот запущено!');
+
 
 
 
