@@ -1524,8 +1524,7 @@ async function sendContactsInfo(chatId, messageId) {
 • (063) 233-33-03
 • (095) 634-63-64
 
-📱 МЕСЕНДЖЕРИ:
-• Telegram: @MagicAirKiev
+📱 Соцмережі:
 • Instagram: magic_air.kiev
 
 🛒 МАГАЗИНИ:
@@ -1757,6 +1756,7 @@ process.on('SIGTERM', () => {
 
 
 console.log('✅ MagicAir бот запущено!');
+
 
 
 
