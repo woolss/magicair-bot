@@ -5,6 +5,36 @@ process.env["NTBA_FIX_350"] = 1;
 const TelegramBot = require('node-telegram-bot-api');
 const { OpenAI } = require('openai');
 const fs = require('fs');
+const { Pool } = require('pg');
+
+// Инициализация подключения к БД
+const pool = process.env.DATABASE_URL ? new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+}) : null;
+
+// Инициализация таблицы при запуске
+async function initDatabase() {
+  if (!pool) {
+    console.log('⚠️ DATABASE_URL не найден, используется локальное сохранение');
+    return false;
+  }
+  
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS bot_data (
+        key VARCHAR(255) PRIMARY KEY,
+        value TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('✅ База данных PostgreSQL инициализирована');
+    return true;
+  } catch (error) {
+    console.error('❌ Ошибка инициализации БД:', error);
+    return false;
+  }
+}
 
 // ========== CONFIG ==========
 // ВАЖНО: Токен тепер загружается из переменной окружения!
@@ -873,6 +903,7 @@ async function handleProfileInput(chatId, text, step) {
       userProfiles[chatId].birthday = text;
       userProfiles[chatId].birthday_changed_at = Date.now();
       delete userStates[chatId];
+      await saveData(); // 💾 Сохраняем профиль сразу!
       await bot.sendMessage(chatId,
         '✅ Профіль успішно створено!\n\nТепер ви будете отримувати:\n• 🎁 Персональні знижки\n• 🎂 Вітання з днем народження\n• 🎊 Спеціальні пропозиції до свят',
         mainMenu
@@ -994,6 +1025,7 @@ async function handlePromotionInput(managerId, text, step) {
       };
       activePromotions.push(promo);
       delete userStates[managerId];
+      await saveData(); // 💾 Сохраняем акцию сразу!
       await bot.sendMessage(managerId,
         `✅ Акція створена!\n\n📋 ${promo.title}\n📝 ${promo.description}\n⏰ До: ${promo.endDate}`,
         managerMenu
@@ -1649,7 +1681,7 @@ async function sendHolidayGreeting(holiday, type) {
 }
 
 // ========== AUTO-SAVE DATA ==========
-function saveData() {
+async function saveData() {
   try {
     const data = {
       userProfiles,
@@ -1657,21 +1689,54 @@ function saveData() {
       messageLog,
       timestamp: Date.now()
     };
-    fs.writeFileSync('bot_data.json', JSON.stringify(data, null, 2));
-    console.log('💾 Data saved');
+    
+    if (pool) {
+      await pool.query(
+        `INSERT INTO bot_data (key, value, updated_at) 
+         VALUES ($1, $2, CURRENT_TIMESTAMP) 
+         ON CONFLICT (key) 
+         DO UPDATE SET value = $2, updated_at = CURRENT_TIMESTAMP`,
+        ['main_data', JSON.stringify(data)]
+      );
+      console.log(`💾 Data saved to PostgreSQL at ${new Date().toLocaleTimeString('uk-UA')}`);
+    } else {
+      fs.writeFileSync('bot_data.json', JSON.stringify(data, null, 2));
+      console.log('💾 Data saved locally');
+    }
   } catch (error) {
     console.error('Failed to save data:', error);
   }
 }
 
-function loadData() {
+
+async function loadData() {
   try {
-    if (fs.existsSync('bot_data.json')) {
-      const data = JSON.parse(fs.readFileSync('bot_data.json', 'utf8'));
+    let data = null;
+    
+    if (pool) {
+      const result = await pool.query(
+        'SELECT value FROM bot_data WHERE key = $1',
+        ['main_data']
+      );
+      
+      if (result.rows.length > 0) {
+        data = JSON.parse(result.rows[0].value);
+        console.log('💾 Data loaded from PostgreSQL');
+      } else {
+        console.log('📭 No data in PostgreSQL, starting fresh');
+      }
+    } else if (fs.existsSync('bot_data.json')) {
+      data = JSON.parse(fs.readFileSync('bot_data.json', 'utf8'));
+      console.log('💾 Data loaded from local file');
+    }
+    
+    if (data) {
       Object.assign(userProfiles, data.userProfiles || {});
+      activePromotions.length = 0;
       activePromotions.push(...(data.activePromotions || []));
+      messageLog.length = 0;
       messageLog.push(...(data.messageLog || []));
-      console.log('💾 Data loaded successfully');
+      console.log(`✅ Восстановлено: ${Object.keys(userProfiles).length} профилей, ${activePromotions.length} акций`);
     }
   } catch (error) {
     console.error('Failed to load data:', error);
@@ -1695,66 +1760,109 @@ function logMessage(from, to, message, type) {
 }
 
 // ========== AUTO-STARTUP & SHUTDOWN ==========
-loadData();
-setInterval(saveData, 5 * 60 * 1000);
-
 let birthdayCheckInterval = null;
 function startDailyChecks() {
-  if (birthdayCheckInterval) return;
+  // Логика перенесена в startBot()
+}
 
-  birthdayCheckInterval = setInterval(() => {
-    const now = new Date();
-    if (now.getMinutes() === 0) {
-      checkBirthdays();
-      checkHolidays();
-    }
-  }, 60 * 60 * 1000);
-
-  const now = new Date();
-  if (now.getMinutes() === 0) {
-    checkBirthdays();
-    checkHolidays();
+async function startBot() {
+  try {
+    // Инициализация БД
+    const hasDB = await initDatabase();
+    console.log(hasDB ? '✅ Используется PostgreSQL' : '⚠️ Используется локальное хранение');
+    
+    // Загрузка данных
+    await loadData();
+    
+    // АВТОСОХРАНЕНИЕ - РАЗ В ЧАС
+    setInterval(async () => {
+      await saveData();
+    }, 60 * 60 * 1000);
+    
+    // ПРОВЕРКА ДНЕЙ РОЖДЕНИЯ - РАЗ В СУТКИ В 10:00
+    const scheduleNextCheck = () => {
+      const now = new Date();
+      const kievTime = new Date(now.toLocaleString("en-US", {timeZone: "Europe/Kiev"}));
+      const nextCheck = new Date(kievTime);
+      nextCheck.setHours(10, 0, 0, 0);
+      
+      if (kievTime.getHours() >= 10) {
+        nextCheck.setDate(nextCheck.getDate() + 1);
+      }
+      
+      const msUntilCheck = nextCheck - kievTime;
+      
+      setTimeout(() => {
+        console.log('🎂 Checking birthdays and holidays...');
+        checkBirthdays();
+        checkHolidays();
+        // Запускаем проверку каждые 24 часа
+        setInterval(() => {
+          checkBirthdays();
+          checkHolidays();
+        }, 24 * 60 * 60 * 1000);
+      }, msUntilCheck);
+      
+      console.log(`⏰ Проверка дней рождения запланирована на: ${nextCheck.toLocaleString('uk-UA')}`);
+    };
+    
+    scheduleNextCheck();
+    
+    // ОЧИСТКА АКЦИЙ - РАЗ В СУТКИ В ПОЛНОЧЬ
+    setInterval(async () => {
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+      
+      const oldCount = activePromotions.length;
+      const filtered = activePromotions.filter(promo => {
+        try {
+          const [d, m, y] = promo.endDate.split('.');
+          const endDate = new Date(y, m - 1, d);
+          return endDate >= now;
+        } catch (e) {
+          console.error(`Error parsing promotion date: ${e.message}`);
+          return false;
+        }
+      });
+      
+      if (filtered.length !== oldCount) {
+        activePromotions.length = 0;
+        activePromotions.push(...filtered);
+        console.log(`🗑 Очищено ${oldCount - filtered.length} старых акций`);
+        await saveData();
+      }
+    }, 24 * 60 * 60 * 1000);
+    
+    console.log('✅ MagicAir бот запущено с PostgreSQL!');
+    console.log(`📊 Загружено: ${Object.keys(userProfiles).length} профилей, ${activePromotions.length} акций`);
+    
+  } catch (error) {
+    console.error('❌ Критическая ошибка при запуске:', error);
+    process.exit(1);
   }
 }
-startDailyChecks();
 
-setInterval(() => {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
+// Запуск бота
+startBot().catch(error => {
+  console.error('❌ Ошибка запуска бота:', error);
+  process.exit(1);
+});
 
-  const updatedPromotions = activePromotions.filter(promo => {
-    try {
-      const endParts = promo.endDate.split('.');
-      const endDate = new Date(endParts[2], endParts[1] - 1, endParts[0]);
-      return endDate.getTime() >= now.getTime();
-    } catch (e) {
-      console.error(`Error parsing promotion date for promo: ${promo.title}`, e);
-      return false;
-    }
-  });
-
-  activePromotions.length = 0;
-  activePromotions.push(...updatedPromotions);
-  saveData();
-
-}, 24 * 60 * 60 * 1000);
-
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down gracefully...');
-  saveData();
+  await saveData();
   bot.stopPolling();
+  if (pool) await pool.end();
   process.exit(0);
 });
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('\n🛑 Shutting down gracefully...');
-  saveData();
+  await saveData();
   bot.stopPolling();
+  if (pool) await pool.end();
   process.exit(0);
 });
-
-
-console.log('✅ MagicAir бот запущено!');
 
 
 
