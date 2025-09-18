@@ -1346,7 +1346,7 @@ async function handleGeneralMessage(chatId, text, userName) {
     try {
       // 3. Отправляем промпт и вопрос клиента в OpenAI
       const completion = await openai.chat.completions.create({
-        model: "gpt-4o", // Рекомендуемая модель для лучших результатов
+        model: "gpt-4o-mini", // Рекомендуемая модель для лучших результатов
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: text }
@@ -1863,6 +1863,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
