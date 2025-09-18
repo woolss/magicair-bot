@@ -1374,27 +1374,36 @@ const systemPrompt = `
         ]
       });
       
-      // 4. Получаем ответ от AI и отправляем с пометкой
+       // 4. Получаем ответ от AI и отправляем с пометкой
       const aiResponse = completion.choices[0].message.content;
-      await bot.sendMessage(chatId, 
-        `🤖 AI-помічник:\n\n${aiResponse}\n\n_Для точної консультації зверніться до менеджера_`, 
-        { parse_mode: 'Markdown', ...mainMenu }
-      );
-      return;
       
+      // ===>> ИСПРАВЛЕННЫЙ БЛОК <<===
+      const finalResponseText = `🤖 AI-помічник:\n\n${aiResponse}\n\n_Для точної консультації зверніться до менеджера_`;
+      const hasLink = aiResponse.includes('https://') || finalResponseText.includes('https://');
+      
+      const options = {
+        parse_mode: 'Markdown',
+        ...mainMenu,
+        disable_web_page_preview: hasLink
+      };
+
+      await bot.sendMessage(chatId, finalResponseText, options);
+      // ===>> КОНЕЦ ИСПРАВЛЕННОГО БЛОКА <<===
+      
+      return;
+
     } catch (error) {
       console.error('⚠️ Помилка OpenAI:', error);
       // Если возникла ошибка, переходим к стандартному сообщению
     }
   }
-  
+
   // 5. Если OpenAI не подключен или произошла ошибка, выводим стандартный ответ
   await bot.sendMessage(chatId,
     'Дякую за повідомлення! Для детальної консультації оберіть "💬 Менеджер" в меню.',
     mainMenu
   );
 }
-
 // ========== FAQ FUNCTIONS ==========
 async function sendDeliveryInfo(chatId, messageId) {
   const keyboard = {
@@ -1888,6 +1897,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
