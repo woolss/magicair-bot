@@ -1344,7 +1344,7 @@ async function handleGeneralMessage(chatId, text, userName) {
       timeGreeting = "Доброго дня";
     } else if (hour >= 18 && hour < 23) {
       timeGreeting = "Доброго вечора";
-    } else {
+    } else if (hour >= 23 && hour < 5) {
       timeGreeting = "Доброї ночі";
     }
 
@@ -1962,6 +1962,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
