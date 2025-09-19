@@ -1334,21 +1334,22 @@ async function handleGeneralMessage(chatId, text, userName) {
     const shouldGreet = timeSinceLastMessage > greetingThreshold;
 
     // Определяем время суток для персонализированного приветствия
-   const kievTime = new Date(new Date().toLocaleString("uk-UA", {timeZone: "Europe/Kiev"}));
-    const hour = kievTime.getHours();
-    
-    let timeGreeting;
-    if (hour >= 5 && hour < 10) {
-      timeGreeting = "Доброго ранку";
-    } else if (hour >= 10 && hour < 18) {
-      timeGreeting = "Доброго дня";
-    } else if (hour >= 18 && hour < 23) {
-      timeGreeting = "Доброго вечора";
-    } else if (hour >= 23 && hour < 5) {
-      timeGreeting = "Доброї ночі";
-    }
+const now = new Date();
+const kievTime = new Date(now.toLocaleString("en-US", { timeZone: "Europe/Kiev" }));
+const hour = kievTime.getHours();
 
-// Для отладки можно добавить:
+let timeGreeting;
+if (hour >= 5 && hour < 10) {
+  timeGreeting = "Доброго ранку";
+} else if (hour >= 10 && hour < 18) {
+  timeGreeting = "Добрий день";
+} else if (hour >= 18 && hour < 23) {
+  timeGreeting = "Доброго вечора";
+} else {
+  timeGreeting = "Доброї ночі";
+}
+
+// Для отладки
 console.log(`🕐 Київ: ${hour}:00, Привітання: ${timeGreeting}`);
     // Проверяем, содержит ли сообщение приветствие
     const greetingWords = ['привіт', 'привет', 'добрий день', 'добрий ранок', 'добрий вечір', 'здравствуй', 'вітаю', 'доброго дня', 'добрый день'];
@@ -1962,6 +1963,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
