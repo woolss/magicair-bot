@@ -1334,7 +1334,6 @@ async function handleGeneralMessage(chatId, text, userName) {
     const shouldGreet = timeSinceLastMessage > greetingThreshold;
 
     // Определяем время суток для персонализированного приветствия
-const now = new Date();
 const kievTime = new Date(now.toLocaleString("en-US", { timeZone: "Europe/Kiev" }));
 const hour = kievTime.getHours();
 
@@ -1963,6 +1962,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
