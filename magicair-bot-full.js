@@ -1422,12 +1422,16 @@ const systemPrompt = `
         ]
       });
       
-       // 4. Получаем ответ от AI и отправляем с пометкой
-      const aiResponse = completion.choices[0].message.content;
       
-      // ===>> ИСПРАВЛЕННЫЙ БЛОК <<===
-      const finalResponseText = `🤖 AI-помічник:\n\n${aiResponse}\n\n_Для точної консультації зверніться до менеджера_`;
-      const hasLink = aiResponse.includes('https://') || finalResponseText.includes('https://');
+      // 4. Получаем ответ от AI и отправляем с пометкой
+      const aiResponse = completion.choices[0].message.content;
+
+     // ===>> НОВИЙ КОД ДЛЯ ЛОГУВАННЯ <<===
+     console.log('🤖 AI-помічник:\n' + aiResponse);
+     
+    // ===>> ИСПРАВЛЕННЫЙ БЛОК <<===
+    const finalResponseText = `🤖 AI-помічник:\n\n${aiResponse}\n\n_Для точної консультації зверніться до менеджера_`;
+    const hasLink = aiResponse.includes('https://') || finalResponseText.includes('https://');
       
       const options = {
         parse_mode: 'Markdown',
@@ -1945,6 +1949,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
