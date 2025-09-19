@@ -4,7 +4,7 @@
   "description": "Telegram bot for MagicAir balloon store",
   "main": "magicair-bot-full.js",
   "scripts": {
-    "start": "node magicair-bot-full.js",
+    "start": "node --unbuffered-io magicair-bot-full.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
