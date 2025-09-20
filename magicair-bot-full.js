@@ -1281,7 +1281,7 @@ async function endManagerChat(managerId) {
 
   } catch (err) {
     console.error("❌ Помилка searchClientHistory:", err.message);
-    await bot.sendMessage(managerId, '⚠️ Помилка при пошуку історії.');
+    bot.sendMessage(managerId, '⚠️ Помилка при пошуку історії.');
   }
 }
 
@@ -2177,6 +2177,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
