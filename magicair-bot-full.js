@@ -432,47 +432,58 @@ async function handleManagerMessage(msg) {
     return;
   }
 
-  switch (text) {
-    case '📋 Клієнти':
-      await showClientsList(managerId);
-      break;
-    case '🎁 Активні акції':
-      await showPromotionsList(managerId);
-      break;
-   case '📄 Журнал':
-      await showMessageLog(managerId);
-      break;
+ switch (text) {
+  case '📋 Клієнти':
+    delete userStates[managerId]; // сброс поиска
+    await showClientsList(managerId);
+    break;
 
-    case '🔍 Пошук історії':
-      userStates[managerId] = { step: 'search_history' };
-      await bot.sendMessage(managerId,
-        '🔍 Введіть для пошуку:\n\n' +
-        '• ID клієнта\n' +
-        '• Ім\'я клієнта\n' +
-        '• Номер телефону\n\n' +
-        'Приклад: 123456789 або Іван або 0501234567'
-      );
-      break;
+  case '🎁 Активні акції':
+    delete userStates[managerId];
+    await showPromotionsList(managerId);
+    break;
 
-    case '🛑 Завершити чат':
-      await endManagerChat(managerId);
-      break;
-    case '📊 Статистика':
-      await showStats(managerId);
-      break;
-    case '🎁 Створити акцію':
-      await startPromotionCreation(managerId);
-      break;
-    default:
-      if (!activeManagerChats[managerId]) {
-        await bot.sendMessage(managerId, '👨‍💼 Будь ласка, оберіть дію з меню.');
-      }
-      break;
-  }
+  case '📄 Журнал':
+    delete userStates[managerId];
+    await showMessageLog(managerId);
+    break;
+
+  case '🔍 Пошук історії':
+    userStates[managerId] = { step: 'search_history' };
+    await bot.sendMessage(managerId,
+      '🔍 Введіть для пошуку:\n\n' +
+      '• ID клієнта\n' +
+      '• Ім\'я клієнта\n' +
+      '• Номер телефону\n\n' +
+      'Приклад: 123456789 або Іван або 0501234567'
+    );
+    break;
+
+  case '🛑 Завершити чат':
+    delete userStates[managerId];
+    await endManagerChat(managerId);
+    break;
+
+  case '📊 Статистика':
+    delete userStates[managerId];
+    await showStats(managerId);
+    break;
+
+  case '🎁 Створити акцію':
+    delete userStates[managerId];
+    await startPromotionCreation(managerId);
+    break;
+
+  default:
+    if (!activeManagerChats[managerId]) {
+      await bot.sendMessage(managerId, '👨‍💼 Будь ласка, оберіть дію з меню.');
+    }
+    break;
+}
+
   // Обработка поиска истории
   if (userStates[managerId]?.step === 'search_history' && text !== '🔍 Пошук історії') {
   await searchClientHistory(managerId, text.trim());
-  delete userStates[managerId];
   return;
   }
 }
@@ -2205,6 +2216,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
