@@ -1234,7 +1234,7 @@ async function endManagerChat(managerId) {
 }
 // ========== ФУНКЦИИ ИСТОРИИ СООБЩЕНИЙ ==========async function searchClientHistory(managerId, query) {
   if (!pool) {
-    await bot.sendMessage(managerId, '⚠️ База даних недоступна');
+    bot.sendMessage(managerId, '⚠️ База даних недоступна');
     return;
   }
 
@@ -2177,6 +2177,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
