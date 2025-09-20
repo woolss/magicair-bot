@@ -1232,27 +1232,39 @@ async function endManagerChat(managerId) {
   }
   await bot.sendMessage(managerId, '✅ Чат завершено.', managerMenu);
 }
-// ========== ФУНКЦИИ ИСТОРИИ СООБЩЕНИЙ ==========
-// ========== ФУНКЦИИ ИСТОРИИ СООБЩЕНИЙ ==========
+// ========== ФУНКЦИИ ИСТОРІЇ ПОВІДОМЛЕНЬ ==========
 async function searchClientHistory(managerId, query) {
   if (!pool) {
-    bot.sendMessage(managerId, '⚠️ База даних недоступна');
+    await bot.sendMessage(managerId, '⚠️ База даних недоступна');
     return;
   }
 
   try {
-    // Ищем в профилях
+    // Нормализация запроса
+    let cleanQuery = query.trim();
+
+    // Убираем + и пробелы из номера
+    const phoneQuery = cleanQuery.replace(/\s|\+|-/g, '');
+
+    // Ищем в профилях по chat_id, имени или телефону
     const profileRes = await pool.query(
       `SELECT chat_id, name, phone FROM profiles
        WHERE CAST(chat_id AS TEXT) ILIKE $1
-          OR name ILIKE $1
-          OR phone ILIKE $1
+          OR name ILIKE $2
+          OR REPLACE(REPLACE(REPLACE(phone, '+',''), ' ', ''), '-', '') ILIKE $3
        LIMIT 5`,
-      [`%${query}%`]
+      [
+        `%${cleanQuery}%`,   // поиск по chat_id
+        `%${cleanQuery}%`,   // поиск по имени
+        `%${phoneQuery}%`    // поиск по номеру
+      ]
     );
 
     if (profileRes.rows.length === 0) {
-      await bot.sendMessage(managerId, '❌ Клієнта не знайдено.\nСпробуйте ввести ID, ім\'я або телефон.');
+      await bot.sendMessage(
+        managerId,
+        '❌ Клієнта не знайдено.\nСпробуйте ввести ID, ім\'я або телефон.'
+      );
       return;
     }
 
@@ -1268,6 +1280,7 @@ async function searchClientHistory(managerId, query) {
       text += `👤 ${profile.name || 'Без імені'}\n🆔 ${profile.chat_id}\n`;
       if (profile.phone) text += `📞 ${profile.phone}\n`;
       text += '\n';
+
       buttons.push([{
         text: `${profile.name || profile.chat_id}`,
         callback_data: `show_history_${profile.chat_id}_0`
@@ -1280,7 +1293,7 @@ async function searchClientHistory(managerId, query) {
 
   } catch (err) {
     console.error("❌ Помилка searchClientHistory:", err);
-    bot.sendMessage(managerId, '⚠️ Помилка при пошуку історії.');
+    await bot.sendMessage(managerId, '⚠️ Помилка при пошуку історії.');
   }
 }
 
@@ -2166,6 +2179,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
