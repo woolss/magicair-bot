@@ -28,39 +28,7 @@ async function initDatabase() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-
-    // 🆕 НОВЫЕ ТАБЛИЦЫ ДЛЯ ИСТОРИИ
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS messages (
-        id SERIAL PRIMARY KEY,
-        from_id BIGINT,
-        to_id BIGINT,
-        message TEXT,
-        type VARCHAR(20),
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS profiles (
-        chat_id BIGINT PRIMARY KEY,
-        name VARCHAR(255),
-        phone VARCHAR(50),
-        birthday VARCHAR(20),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Создаем индексы для быстрого поиска
-    await pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_messages_from ON messages(from_id);
-      CREATE INDEX IF NOT EXISTS idx_messages_to ON messages(to_id);
-      CREATE INDEX IF NOT EXISTS idx_profiles_name ON profiles(name);
-      CREATE INDEX IF NOT EXISTS idx_profiles_phone ON profiles(phone);
-    `);
-
-    console.log('✅ База данных PostgreSQL инициализирована с таблицами истории');
+    console.log('✅ База данных PostgreSQL инициализирована');
     return true;
   } catch (error) {
     console.error('❌ Ошибка инициализации БД:', error);
@@ -155,8 +123,8 @@ const managerMenu = {
   reply_markup: {
     keyboard: [
       ['📋 Клієнти', '🎁 Активні акції'],
-      ['📄 Журнал', '🔍 Пошук історії'],
-      ['📊 Статистика', '🛑 Завершити чат']
+      ['📄 Журнал', '📊 Статистика'],
+      ['🛑 Завершити чат']
     ],
     resize_keyboard: true
   }
@@ -428,7 +396,7 @@ async function handleManagerMessage(msg) {
   if (activeManagerChats[managerId] && !managerCommands.includes(text)) {
     const clientId = activeManagerChats[managerId];
     await bot.sendMessage(clientId, `👨‍💼 ${getManagerName(managerId)}: ${text}`);
-    await logMessage(managerId, clientId, text, 'manager');
+    logMessage(managerId, clientId, text, 'manager');
     return;
   }
 
@@ -439,21 +407,9 @@ async function handleManagerMessage(msg) {
     case '🎁 Активні акції':
       await showPromotionsList(managerId);
       break;
-   case '📄 Журнал':
+    case '📄 Журнал':
       await showMessageLog(managerId);
       break;
-
-    case '🔍 Пошук історії':
-      userStates[managerId] = { step: 'search_history' };
-      await bot.sendMessage(managerId,
-        '🔍 Введіть для пошуку:\n\n' +
-        '• ID клієнта\n' +
-        '• Ім\'я клієнта\n' +
-        '• Номер телефону\n\n' +
-        'Приклад: 123456789 або Іван або 0501234567'
-      );
-      break;
-
     case '🛑 Завершити чат':
       await endManagerChat(managerId);
       break;
@@ -465,32 +421,17 @@ async function handleManagerMessage(msg) {
       break;
     default:
       if (!activeManagerChats[managerId]) {
-        await bot.sendMessage(managerId, '👨‍💼 Будь ласка, оберіть дію з меню.');
+         await bot.sendMessage(managerId, '👨‍💼 Будь ласка, оберіть дію з меню.');
       }
       break;
   }
-  // Обработка поиска истории
-  if (userStates[managerId]?.step === 'search_history') {
-    await searchClientHistory(managerId, text.trim());
-    delete userStates[managerId];
-    return;
-  }
+}
 
 // ========== CALLBACK QUERIES ==========
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
   const messageId = query.message.message_id;
-
-  // Обработка истории сообщений
-  if (data.startsWith('show_history_')) {
-    const parts = data.split('_');
-    const clientId = parts[2];
-    const offset = parseInt(parts[3] || 0);
-    await sendClientHistory(chatId, clientId, offset);
-    await bot.answerCallbackQuery(query.id);
-    return;
-  }
 
   await bot.answerCallbackQuery(query.id).catch(() => {});
 
@@ -848,7 +789,7 @@ async function startManagerChatWithClient(managerId, clientId) {
 
   const welcomeMessage = 'Чим можу вам допомогти?';
   await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
-  await logMessage(managerId, clientId, welcomeMessage, 'manager');
+  logMessage(managerId, clientId, welcomeMessage, 'manager');
 }
 
 // --- ИСПРАВЛЕННАЯ функция для отправки информации о товарах (открывается в Telegram) ---
@@ -960,10 +901,9 @@ async function handleProfileInput(chatId, text, step) {
         return;
       }
       userProfiles[chatId].birthday = text;
-     userProfiles[chatId].birthday_changed_at = Date.now();
+      userProfiles[chatId].birthday_changed_at = Date.now();
       delete userStates[chatId];
       await saveData(); // 💾 Сохраняем профиль сразу!
-      await syncProfileToDB(chatId); // 🆕 Синхронизируем с БД!
       await bot.sendMessage(chatId,
         '✅ Профіль успішно створено!\n\nТепер ви будете отримувати:\n• 🎁 Персональні знижки\n• 🎂 Вітання з днем народження\n• 🎊 Спеціальні пропозиції до свят',
         mainMenu
@@ -971,10 +911,6 @@ async function handleProfileInput(chatId, text, step) {
       break;
     }
   }
-}
-// ========== СИНХРОНИЗАЦИЯ ПРОФИЛЕЙ С БД ==========
-async function syncProfileToDB(chatId) {
-  // ... весь код из пункта 3 ...
 }
 
 async function showEditOptions(chatId, messageId) {
@@ -1195,7 +1131,7 @@ async function forwardToManager(clientId, text, userName) {
   const managerName = getManagerName(managerId);
   if (managerId && activeManagerChats[managerId] === clientId) {
     await bot.sendMessage(managerId, `👤 ${userName} (${clientId}): ${text}`);
-    await logMessage(clientId, managerId, text, 'client');
+    logMessage(clientId, managerId, text, 'client');
   } else {
     await bot.sendMessage(clientId, '⚠ З\'єднання з менеджером втрачено. Спробуйте ще раз.', mainMenu);
     delete userStates[clientId];
@@ -1232,158 +1168,7 @@ async function endManagerChat(managerId) {
   }
   await bot.sendMessage(managerId, '✅ Чат завершено.', managerMenu);
 }
-// ========== ФУНКЦИИ ИСТОРИИ СООБЩЕНИЙ ==========async function searchClientHistory(managerId, query) {
-  if (!pool) {
-    await bot.sendMessage(managerId, '⚠️ База даних недоступна');
-    return;
-  }
 
-  try {
-    // Ищем в профилях
-    const profileRes = await pool.query(
-      `SELECT chat_id, name, phone FROM profiles
-       WHERE CAST(chat_id AS TEXT) ILIKE $1
-          OR name ILIKE $1
-          OR phone ILIKE $1
-       LIMIT 5`,
-      [`%${query}%`]
-    );
-    if (profileRes.rows.length === 0) {
-      await bot.sendMessage(managerId, '❌ Клієнта не знайдено.\nСпробуйте ввести ID, ім\'я або телефон.');
-      return;
-    }
-
-    // Если найден один клиент - сразу показываем историю
-    if (profileRes.rows.length === 1) {
-      await sendClientHistory(managerId, profileRes.rows[0].chat_id, 0);
-      return;
-    }
-
-    // Если найдено несколько - показываем список
-    let text = '📋 Знайдено клієнтів:\n\n';
-    const buttons = [];
-
-    for (const profile of profileRes.rows) {
-      text += `👤 ${profile.name || 'Без імені'}\n`;
-      text += `🆔 ${profile.chat_id}\n`;
-      if (profile.phone) text += `📞 ${profile.phone}\n`;
-      text += '\n';
-
-      buttons.push([{
-        text: `${profile.name || profile.chat_id}`,
-        callback_data: `show_history_${profile.chat_id}_0`
-      }]);
-    }
-
-    await bot.sendMessage(managerId, text, {
-      reply_markup: { inline_keyboard: buttons }
-    });
-
-  } catch (err) {
-    console.error("❌ Помилка searchClientHistory:", err.message);
-    await bot.sendMessage(managerId, '⚠️ Помилка при пошуку історії.');
-  }
-}
-
-async function sendClientHistory(managerId, clientId, offset = 0) {
-  if (!pool) {
-    await bot.sendMessage(managerId, '⚠️ База даних недоступна');
-    return;
-  }
-
-  try {
-    // Получаем профиль клиента
-    const profileRes = await pool.query(
-      `SELECT chat_id, name, phone, birthday FROM profiles WHERE chat_id = $1`,
-      [clientId]
-    );
-    let profileInfo = '';
-    if (profileRes.rows.length > 0) {
-      const profile = profileRes.rows[0];
-      profileInfo = `👤 ${profile.name || 'Без імені'} (ID: ${profile.chat_id})\n`;
-      if (profile.phone) profileInfo += `📞 ${profile.phone}\n`;
-      if (profile.birthday) profileInfo += `🎂 ${profile.birthday}\n`;
-    } else {
-      profileInfo = `👤 Клієнт ID: ${clientId}\n`;
-    }
-
-    // Получаем сообщения
-    const msgs = await pool.query(
-      `SELECT * FROM messages
-       WHERE from_id = $1 OR to_id = $1
-       ORDER BY timestamp DESC
-       LIMIT 20 OFFSET $2`,
-      [clientId, offset]
-    );
-
-    if (msgs.rows.length === 0 && offset === 0) {
-      await bot.sendMessage(managerId,
-        profileInfo + '\n⚠️ Історія повідомлень порожня.'
-      );
-      return;
-    }
-
-    if (msgs.rows.length === 0) {
-      await bot.sendMessage(managerId, '⚠️ Більше повідомлень немає.');
-      return;
-    }
-
-    let text = `📂 ІСТОРІЯ СПІЛКУВАННЯ\n\n${profileInfo}\n`;
-    text += `📄 Показано: ${offset + 1}-${offset + msgs.rows.length} повідомлень\n`;
-    text += '━━━━━━━━━━━━━━━\n\n';
-
-    // Форматируем сообщения
-    for (const msg of msgs.rows.reverse()) { // Разворачиваем для хронологического порядка
-      const isFromClient = msg.from_id == clientId;
-      const icon = msg.type === 'manager' ? '👨‍💼' : '👤';
-      const direction = isFromClient ? '➡️' : '⬅️';
-      const date = new Date(msg.timestamp);
-      const timeStr = date.toLocaleString('uk-UA', {
-        day: '2-digit',
-        month: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-
-      text += `${icon} ${direction} ${timeStr}\n`;
-      text += `${msg.message.substring(0, 200)}\n\n`;
-    }
-
-    // Кнопки пагинации
-    const buttons = [];
-    const navButtons = [];
-
-    if (offset > 0) {
-      navButtons.push({
-         text: '⬅️ Попередні',
-         callback_data: `show_history_${clientId}_${Math.max(0, offset - 20)}`
-       });
-    }
-
-    if (msgs.rows.length === 20) {
-      navButtons.push({
-         text: 'Наступні ➡️',
-         callback_data: `show_history_${clientId}_${offset + 20}`
-       });
-    }
-
-    if (navButtons.length > 0) buttons.push(navButtons);
-
-    // Кнопка начать чат
-    buttons.push([{
-       text: '💬 Почати чат з клієнтом',
-       callback_data: `client_chat_${clientId}`
-     }]);
-
-    await bot.sendMessage(managerId, text, {
-      reply_markup: { inline_keyboard: buttons },
-      parse_mode: 'HTML'
-    });
-  } catch (err) {
-    console.error("❌ Помилка sendClientHistory:", err.message);
-    await bot.sendMessage(managerId, '⚠️ Помилка при завантаженні історії.');
-  }
-}
 async function showClientsList(managerId) {
   let clientsList = '📋 КЛІЄНТИ:\n\n';
   const waitingClientsList = Array.from(waitingClients);
@@ -2045,8 +1830,7 @@ async function loadData() {
 }
 
 // ========== LOGGING ==========
-async function logMessage(from, to, message, type) {
-  // Сохраняем в массив для совместимости
+function logMessage(from, to, message, type) {
   messageLog.push({
     from,
     to,
@@ -2059,20 +1843,8 @@ async function logMessage(from, to, message, type) {
   if (messageLog.length > MAX_LOG_SIZE) {
     messageLog.splice(0, messageLog.length - MAX_LOG_SIZE);
   }
-
-  // 🆕 СОХРАНЯЕМ В БД
-  if (pool) {
-    try {
-      await pool.query(
-        `INSERT INTO messages (from_id, to_id, message, type)
-         VALUES ($1, $2, $3, $4)`,
-        [from, to, message.substring(0, 500), type]
-      );
-    } catch (err) {
-      console.error("❌ Ошибка логирования в БД:", err.message);
-    }
-  }
 }
+
 // ========== AUTO-STARTUP & SHUTDOWN ==========
 let birthdayCheckInterval = null;
 function startDailyChecks() {
@@ -2111,7 +1883,7 @@ async function startBot() {
         checkBirthdays();
         checkHolidays();
         // Запускаем проверку каждые 24 часа
-        setInterval(async () => {
+        setInterval(() => {
           checkBirthdays();
           checkHolidays();
         }, 24 * 60 * 60 * 1000);
@@ -2177,6 +1949,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
