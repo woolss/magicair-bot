@@ -2044,7 +2044,8 @@ async function loadData() {
   }
 }
 
-// ========== LOGGING ==========async function logMessage(from, to, message, type) {
+// ========== LOGGING ==========
+async function logMessage(from, to, message, type) {
   // Сохраняем в массив для совместимости
   messageLog.push({
     from,
@@ -2064,7 +2065,7 @@ async function loadData() {
     try {
       await pool.query(
         `INSERT INTO messages (from_id, to_id, message, type)
-          VALUES ($1, $2, $3, $4)`,
+         VALUES ($1, $2, $3, $4)`,
         [from, to, message.substring(0, 500), type]
       );
     } catch (err) {
@@ -2176,6 +2177,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
