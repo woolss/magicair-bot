@@ -2110,7 +2110,7 @@ async function startBot() {
         checkBirthdays();
         checkHolidays();
         // Запускаем проверку каждые 24 часа
-        setInterval(() => {
+        setInterval(async () => {
           checkBirthdays();
           checkHolidays();
         }, 24 * 60 * 60 * 1000);
@@ -2176,6 +2176,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
