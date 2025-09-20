@@ -470,10 +470,10 @@ async function handleManagerMessage(msg) {
       break;
   }
   // Обработка поиска истории
-  if (userStates[managerId]?.step === 'search_history') {
-    await searchClientHistory(managerId, text.trim());
-    delete userStates[managerId];
-    return;
+  if (userStates[managerId]?.step === 'search_history' && text !== '🔍 Пошук історії') {
+  await searchClientHistory(managerId, text.trim());
+  delete userStates[managerId];
+  return;
   }
 }
 // ========== CALLBACK QUERIES ==========
@@ -2166,6 +2166,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
