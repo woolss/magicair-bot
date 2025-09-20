@@ -972,9 +972,27 @@ async function handleProfileInput(chatId, text, step) {
     }
   }
 }
-// ========== СИНХРОНИЗАЦИЯ ПРОФИЛЕЙ С БД ==========
+// ========== СИНХРОНІЗАЦІЯ ПРОФІЛІВ ==========
 async function syncProfileToDB(chatId) {
-  // ... весь код из пункта 3 ...
+  try {
+    const profile = userProfiles[chatId];
+    if (!profile) return;
+
+    await pool.query(
+      `INSERT INTO profiles (chat_id, name, phone, birthday)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (chat_id) DO UPDATE
+         SET name = EXCLUDED.name,
+             phone = EXCLUDED.phone,
+             birthday = EXCLUDED.birthday`,
+      [chatId, profile.name, profile.phone, profile.birthday]
+    );
+
+    console.log(`✅ Профіль збережено в БД: ${chatId} (${profile.name || "Без імені"})`);
+
+  } catch (err) {
+    console.error("❌ Помилка syncProfileToDB:", err);
+  }
 }
 
 async function showEditOptions(chatId, messageId) {
@@ -1232,7 +1250,8 @@ async function endManagerChat(managerId) {
   }
   await bot.sendMessage(managerId, '✅ Чат завершено.', managerMenu);
 }
-// ========== ФУНКЦИИ ИСТОРІЇ ПОВІДОМЛЕНЬ ==========
+
+// ========== ФУНКЦІЇ ІСТОРІЇ ==========
 async function searchClientHistory(managerId, query) {
   if (!pool) {
     await bot.sendMessage(managerId, '⚠️ База даних недоступна');
@@ -1240,31 +1259,38 @@ async function searchClientHistory(managerId, query) {
   }
 
   try {
-    // Нормализация запроса
-    let cleanQuery = query.trim();
+    const cleanQuery = query.trim();
+    const phoneQuery = cleanQuery.replace(/\s|\+|-/g, ''); // нормализация телефона
 
-    // Убираем + и пробелы из номера
-    const phoneQuery = cleanQuery.replace(/\s|\+|-/g, '');
-
-    // Ищем в профилях по chat_id, имени или телефону
-    const profileRes = await pool.query(
+    // Основной поиск в БД
+    let profileRes = await pool.query(
       `SELECT chat_id, name, phone FROM profiles
        WHERE CAST(chat_id AS TEXT) ILIKE $1
           OR name ILIKE $2
           OR REPLACE(REPLACE(REPLACE(phone, '+',''), ' ', ''), '-', '') ILIKE $3
        LIMIT 5`,
-      [
-        `%${cleanQuery}%`,   // поиск по chat_id
-        `%${cleanQuery}%`,   // поиск по имени
-        `%${phoneQuery}%`    // поиск по номеру
-      ]
+      [`%${cleanQuery}%`, `%${cleanQuery}%`, `%${phoneQuery}%`]
     );
 
-    if (profileRes.rows.length === 0) {
-      await bot.sendMessage(
-        managerId,
-        '❌ Клієнта не знайдено.\nСпробуйте ввести ID, ім\'я або телефон.'
+    // Если в БД ничего не нашли → ищем в userProfiles
+    if (profileRes.rows.length === 0 && userProfiles) {
+      const found = Object.values(userProfiles).filter(p =>
+        (p.chatId && p.chatId.toString().includes(cleanQuery)) ||
+        (p.name && p.name.toLowerCase().includes(cleanQuery.toLowerCase())) ||
+        (p.phone && p.phone.replace(/\s|\+|-/g, '').includes(phoneQuery))
       );
+
+      if (found.length > 0) {
+        profileRes = { rows: found.map(p => ({
+          chat_id: p.chatId,
+          name: p.name,
+          phone: p.phone
+        })) };
+      }
+    }
+
+    if (profileRes.rows.length === 0) {
+      await bot.sendMessage(managerId, '❌ Клієнта не знайдено.\nСпробуйте ввести ID, ім\'я або телефон.');
       return;
     }
 
@@ -2179,6 +2205,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
