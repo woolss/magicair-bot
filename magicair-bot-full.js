@@ -836,30 +836,73 @@ async function notifyManagers(clientId, userName, topic) { // ДОБАВЛЕНО
 }
 
 async function startManagerChatWithClient(managerId, clientId) {
-  if (activeManagerChats[managerId]) {
-    await bot.sendMessage(managerId, '🛑 Ви вже в активному чаті. Завершіть його, щоб підключитися до іншого.');
-    return;
-  }
-
-  if (!waitingClients.has(clientId)) {
-    await bot.sendMessage(managerId, 'Клієнт уже не в черзі або його запит скасовано.');
-    return;
-  }
-
   const managerName = getManagerName(managerId);
 
+  // Проверяем, есть ли уже активный чат у менеджера
+  if (activeManagerChats[managerId]) {
+    const currentClientId = activeManagerChats[managerId];
+    
+    // Если менеджер пытается подключиться к тому же клиенту - просто уведомляем
+    if (currentClientId === clientId) {
+      await bot.sendMessage(managerId, `ℹ️ Ви вже підключені до цього клієнта (${clientId}).`);
+      return;
+    }
+    
+    // Если к другому клиенту - предлагаем завершить текущий чат
+    await bot.sendMessage(managerId, 
+      `⚠️ У вас активний чат з клієнтом ${currentClientId}.\n\n` +
+      `Спочатку завершіть поточний чат кнопкою "🛑 Завершити чат", ` +
+      `а потім спробуйте підключитися до іншого клієнта.`
+    );
+    return;
+  }
+
+  // Проверяем, не занят ли клиент другим менеджером
+  for (const [otherManagerId, otherClientId] of Object.entries(activeManagerChats)) {
+    if (otherClientId === clientId && otherManagerId !== managerId) {
+      const otherManagerName = getManagerName(otherManagerId);
+      await bot.sendMessage(managerId, 
+        `❌ Клієнт ${clientId} вже спілкується з ${otherManagerName}.`
+      );
+      return;
+    }
+  }
+
+  // Устанавливаем соединение
   activeManagerChats[managerId] = clientId;
   userStates[clientId] = { step: 'manager_chat', managerId: managerId };
+  
+  // Убираем клиента из очереди ожидания, если он там был
   waitingClients.delete(clientId);
 
+  // Уведомляем менеджера
   await bot.sendMessage(managerId, `✅ Ви підключені до клієнта (${clientId}).`);
   
-  // ИЗМЕНЁННАЯ СТРОКА: добавлено "Менеджер"
-  await bot.sendMessage(clientId, `👨‍💼 Менеджер ${managerName} підключився до чату!\nВін радий відповісти на ваші запитання.`, clientInChatMenu);
+  // Уведомляем клиента о подключении менеджера
+  try {
+    await bot.sendMessage(clientId, 
+      `👨‍💼 Менеджер ${managerName} підключився до чату!\n` +
+      `Він готовий відповісти на ваші запитання.`, 
+      clientInChatMenu
+    );
 
-  const welcomeMessage = 'Чим можу вам допомогти?';
-  await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
-  await logMessage(managerId, clientId, welcomeMessage, 'manager');
+    // Менеджер отправляет приветственное сообщение
+    const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
+    await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
+    await logMessage(managerId, clientId, welcomeMessage, 'manager');
+    
+  } catch (error) {
+    // Если не удалось отправить сообщение клиенту (например, заблокировал бота)
+    console.error(`Failed to notify client ${clientId}:`, error.message);
+    await bot.sendMessage(managerId, 
+      `⚠️ Не вдалося надіслати повідомлення клієнту ${clientId}.\n` +
+      `Можливо, клієнт заблокував бота або видалив чат.`
+    );
+    
+    // Очищаем соединение
+    delete activeManagerChats[managerId];
+    delete userStates[clientId];
+  }
 }
 
 // --- ИСПРАВЛЕННАЯ функция для отправки информации о товарах (открывается в Telegram) ---
@@ -2278,6 +2321,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
