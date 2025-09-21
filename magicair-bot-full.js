@@ -1675,7 +1675,7 @@ async function handleGeneralMessage(chatId, text, userName) {
     const shouldGreet = timeSinceLastMessage > greetingThreshold;
     
     // Проверяем, содержит ли сообщение приветствие
-    const greetingWords = ['привіт', 'привет', 'добрий день', 'добрий ранок', 'добрий вечір', 'здравствуй', 'вітаю', 'доброго дня', 'добрый день'];
+    const greetingWords = ['привіт', 'привет', 'добрий день', 'добрий ранок', 'добрий вечір', 'здравствуйте', 'вітаю', 'доброго дня', 'добрый день', 'добрый вечер'];
     const messageContainsGreeting = greetingWords.some(word =>
       text.toLowerCase().includes(word)
     );
@@ -2336,6 +2336,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
