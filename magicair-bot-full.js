@@ -2162,7 +2162,23 @@ let birthdayCheckInterval = null;
 function startDailyChecks() {
   // Логика перенесена в startBot()
 }
-
+async function syncAllProfilesToDB() {
+  if (!pool) return;
+  
+  console.log('🔄 Синхронізація всіх профілів з БД...');
+  let synced = 0;
+  
+  for (const [chatId, profile] of Object.entries(userProfiles)) {
+    try {
+      await syncProfileToDB(chatId);
+      synced++;
+    } catch (err) {
+      console.error(`Ошибка синхронизации профиля ${chatId}:`, err);
+    }
+  }
+  
+  console.log(`✅ Синхронізовано профілів: ${synced}/${Object.keys(userProfiles).length}`);
+}
 async function startBot() {
   try {
     // Инициализация БД
@@ -2262,6 +2278,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
