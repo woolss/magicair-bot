@@ -1772,16 +1772,31 @@ const systemPrompt = `
      console.log('🤖 AI-помічник:\n' + aiResponse);
      
     // ===>> ИСПРАВЛЕННЫЙ БЛОК <<===
-    const finalResponseText = `🤖 AI-помічник:\n\n${aiResponse}\n\n_Для точної консультації зверніться до менеджера_`;
-    const hasLink = aiResponse.includes('https://') || finalResponseText.includes('https://');
-      
-      const options = {
-        parse_mode: 'Markdown',
-        ...mainMenu,
-        disable_web_page_preview: hasLink
-      };
+// Проверяем, нужно ли добавлять предложение обратиться к менеджеру
+const isSimpleGreeting = /^(привіт|привет|добрий|вітаю|здрав)/i.test(text.toLowerCase());
+const isGeneralQuestion = aiResponse.includes('ціна') || aiResponse.includes('доставка') || aiResponse.includes('замовлення') || aiResponse.length > 150;
 
-      await bot.sendMessage(chatId, finalResponseText, options);
+let finalResponseText;
+if (isSimpleGreeting && aiResponse.toLowerCase().includes('привіт')) {
+  // Для простых приветствий - только ответ AI без дополнительного текста
+  finalResponseText = `🤖 AI-помічник:\n\n${aiResponse}`;
+} else if (isGeneralQuestion) {
+  // Для сложных вопросов - с предложением связаться с менеджером
+  finalResponseText = `🤖 AI-помічник:\n\n${aiResponse}\n\n_Для точної консультації зверніться до менеджера_`;
+} else {
+  // Для остальных случаев - просто ответ AI
+  finalResponseText = `🤖 AI-помічник:\n\n${aiResponse}`;
+}
+
+const hasLink = finalResponseText.includes('https://');
+
+const options = {
+  parse_mode: 'Markdown',
+  ...mainMenu,
+  disable_web_page_preview: hasLink
+};
+
+await bot.sendMessage(chatId, finalResponseText, options);
       // ===>> КОНЕЦ ИСПРАВЛЕННОГО БЛОКА <<===
       
       return;
@@ -2321,6 +2336,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
