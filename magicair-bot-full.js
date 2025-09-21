@@ -927,6 +927,7 @@ async function startProfileCreation(chatId) {
 async function handleProfileInput(chatId, text, step) {
   if (!userProfiles[chatId]) {
     userProfiles[chatId] = {
+      chatId: chatId,
       created: Date.now(),
       notifications: true,
       holidayNotifications: []
@@ -939,6 +940,7 @@ async function handleProfileInput(chatId, text, step) {
       await bot.sendMessage(chatId,
         '📞 Крок 2/3: Введіть ваш номер телефону:\n(формат: +380XXXXXXXXX)'
       );
+      await syncProfileToDB(chatId);
       break;
     case 'profile_phone':
       const phoneRegex = /^(\+380|380|0)?[0-9]{9}$/;
@@ -953,6 +955,7 @@ async function handleProfileInput(chatId, text, step) {
       await bot.sendMessage(chatId,
         '🎂 Крок 3/3: Введіть дату вашого народження:\n(формат: ДД.MM.YYYY, приклад: 15.03.1990)'
       );
+      await syncProfileToDB(chatId);
       break;
     case 'profile_birthday': {
       const dateRegex = /^(\d{2})\.(\d{2})\.(\d{4})$/;
@@ -985,9 +988,14 @@ async function handleProfileInput(chatId, text, step) {
 }
 // ========== СИНХРОНІЗАЦІЯ ПРОФІЛІВ ==========
 async function syncProfileToDB(chatId) {
+  if (!pool) return;
+  
   try {
     const profile = userProfiles[chatId];
     if (!profile) return;
+
+    // Убеждаемся, что chatId есть в профиле
+    profile.chatId = chatId;
 
     await pool.query(
       `INSERT INTO profiles (chat_id, name, phone, birthday)
@@ -995,11 +1003,12 @@ async function syncProfileToDB(chatId) {
        ON CONFLICT (chat_id) DO UPDATE
          SET name = EXCLUDED.name,
              phone = EXCLUDED.phone,
-             birthday = EXCLUDED.birthday`,
-      [chatId, profile.name, profile.phone, profile.birthday]
+             birthday = EXCLUDED.birthday,
+             updated_at = CURRENT_TIMESTAMP`,
+      [chatId, profile.name || null, profile.phone || null, profile.birthday || null]
     );
 
-    console.log(`✅ Профіль збережено в БД: ${chatId} (${profile.name || "Без імені"})`);
+    console.log(`✅ Профіль синхронізовано: ${chatId} (${profile.name || "Без імені"})`);
 
   } catch (err) {
     console.error("❌ Помилка syncProfileToDB:", err);
@@ -1271,37 +1280,68 @@ async function searchClientHistory(managerId, query) {
 
   try {
     const cleanQuery = query.trim();
-    const phoneQuery = cleanQuery.replace(/\s|\+|-/g, ''); // нормализация телефона
+    const phoneQuery = cleanQuery.replace(/[\s\+\-\(\)]/g, ''); // улучшенная нормализация
+    
+    console.log(`🔍 Поиск клиента: "${cleanQuery}"`);
 
-    // Основной поиск в БД
+    // Расширенный поиск в БД
     let profileRes = await pool.query(
-      `SELECT chat_id, name, phone FROM profiles
-       WHERE CAST(chat_id AS TEXT) ILIKE $1
-          OR name ILIKE $2
-          OR REPLACE(REPLACE(REPLACE(phone, '+',''), ' ', ''), '-', '') ILIKE $3
-       LIMIT 5`,
-      [`%${cleanQuery}%`, `%${cleanQuery}%`, `%${phoneQuery}%`]
+      `SELECT chat_id, name, phone, birthday FROM profiles
+       WHERE CAST(chat_id AS TEXT) = $1
+          OR CAST(chat_id AS TEXT) ILIKE $2
+          OR LOWER(name) ILIKE LOWER($3)
+          OR REPLACE(REPLACE(REPLACE(REPLACE(phone, '+',''), ' ', ''), '-', ''), '(', '') ILIKE $4
+          OR REPLACE(REPLACE(REPLACE(REPLACE(phone, '+',''), ' ', ''), '-', ''), ')', '') ILIKE $4
+       ORDER BY 
+         CASE 
+           WHEN CAST(chat_id AS TEXT) = $1 THEN 1
+           WHEN LOWER(name) = LOWER($3) THEN 2
+           ELSE 3
+         END
+       LIMIT 10`,
+      [cleanQuery, `%${cleanQuery}%`, `%${cleanQuery}%`, `%${phoneQuery}%`]
     );
 
-    // Если в БД ничего не нашли → ищем в userProfiles
-    if (profileRes.rows.length === 0 && userProfiles) {
-      const found = Object.values(userProfiles).filter(p =>
-        (p.chatId && p.chatId.toString().includes(cleanQuery)) ||
-        (p.name && p.name.toLowerCase().includes(cleanQuery.toLowerCase())) ||
-        (p.phone && p.phone.replace(/\s|\+|-/g, '').includes(phoneQuery))
-      );
+    console.log(`📋 Найдено в БД: ${profileRes.rows.length} записей`);
 
-      if (found.length > 0) {
-        profileRes = { rows: found.map(p => ({
-          chat_id: p.chatId,
-          name: p.name,
-          phone: p.phone
-        })) };
+    // Если в БД ничего не найдено, ищем в памяти и синхронизируем
+    if (profileRes.rows.length === 0) {
+      console.log('🔄 Поиск в памяти...');
+      
+      const foundInMemory = [];
+      for (const [chatId, profile] of Object.entries(userProfiles)) {
+        const chatIdStr = chatId.toString();
+        const nameMatch = profile.name && profile.name.toLowerCase().includes(cleanQuery.toLowerCase());
+        const phoneMatch = profile.phone && profile.phone.replace(/[\s\+\-\(\)]/g, '').includes(phoneQuery);
+        const idMatch = chatIdStr === cleanQuery || chatIdStr.includes(cleanQuery);
+        
+        if (idMatch || nameMatch || phoneMatch) {
+          foundInMemory.push({
+            chat_id: parseInt(chatId),
+            name: profile.name || null,
+            phone: profile.phone || null,
+            birthday: profile.birthday || null
+          });
+          
+          // Синхронизируем найденный профиль с БД
+          await syncProfileToDB(chatId);
+        }
+      }
+      
+      if (foundInMemory.length > 0) {
+        console.log(`💾 Найдено в памяти и синхронизировано: ${foundInMemory.length} профилей`);
+        profileRes = { rows: foundInMemory };
       }
     }
 
     if (profileRes.rows.length === 0) {
-      await bot.sendMessage(managerId, '❌ Клієнта не знайдено.\nСпробуйте ввести ID, ім\'я або телефон.');
+      await bot.sendMessage(managerId, 
+        `❌ Клієнта не знайдено по запиту: "${cleanQuery}"\n\n` +
+        `Спробуйте ввести:\n` +
+        `• Точний ID клієнта\n` +
+        `• Повне ім'я\n` +
+        `• Номер телефону без пробілів`
+      );
       return;
     }
 
@@ -1310,16 +1350,20 @@ async function searchClientHistory(managerId, query) {
       return;
     }
 
-    let text = '📋 Знайдено клієнтів:\n\n';
+    // Показываем список найденных клиентов
+    let text = `📋 Знайдено клієнтів: ${profileRes.rows.length}\n\n`;
     const buttons = [];
 
-    for (const profile of profileRes.rows) {
-      text += `👤 ${profile.name || 'Без імені'}\n🆔 ${profile.chat_id}\n`;
-      if (profile.phone) text += `📞 ${profile.phone}\n`;
+    for (let i = 0; i < Math.min(profileRes.rows.length, 10); i++) {
+      const profile = profileRes.rows[i];
+      text += `${i + 1}. 👤 ${profile.name || 'Без імені'}\n`;
+      text += `   🆔 ${profile.chat_id}\n`;
+      if (profile.phone) text += `   📞 ${profile.phone}\n`;
+      if (profile.birthday) text += `   🎂 ${profile.birthday}\n`;
       text += '\n';
 
       buttons.push([{
-        text: `${profile.name || profile.chat_id}`,
+        text: `${profile.name || profile.chat_id} (${profile.chat_id})`,
         callback_data: `show_history_${profile.chat_id}_0`
       }]);
     }
@@ -1330,7 +1374,7 @@ async function searchClientHistory(managerId, query) {
 
   } catch (err) {
     console.error("❌ Помилка searchClientHistory:", err);
-    await bot.sendMessage(managerId, '⚠️ Помилка при пошуку історії.');
+    await bot.sendMessage(managerId, '⚠️ Помилка при пошуку історії. Спробуйте ще раз.');
   }
 }
 
@@ -1659,6 +1703,7 @@ const systemPrompt = `
     // Обновляем lastActivity после обработки
     if (!userProfiles[chatId]) {
       userProfiles[chatId] = {
+        chatId: chatId,
         created: Date.now(),
         notifications: true,
         holidayNotifications: []
@@ -2126,6 +2171,7 @@ async function startBot() {
     
     // Загрузка данных
     await loadData();
+    if (hasDB) await syncAllProfilesToDB();
     
     // АВТОСОХРАНЕНИЕ - РАЗ В ЧАС
     setInterval(async () => {
@@ -2216,6 +2262,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
