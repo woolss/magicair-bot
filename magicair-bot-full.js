@@ -410,6 +410,7 @@ if (isThanksMessage(text)) {
 }
    // --- NEW: распознаём потенциальное замовлення и уведомляем менеджеров ---
   if (isOrderMessage(text)) {
+    console.log("📦 Order detected from", chatId, "text:", text);
     // гарантируем профиль
     if (!userProfiles[chatId]) {
       userProfiles[chatId] = { chatId, created: Date.now(), notifications: true, holidayNotifications: [] };
@@ -431,9 +432,11 @@ if (isThanksMessage(text)) {
     // Уведомляем свободных менеджеров (если нет — всех)
     const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
     const notifyList = freeManagers.length ? freeManagers : MANAGERS;
+     console.log("🔔 Managers to notify:", notifyList);
 
     for (const managerId of notifyList) {
       try {
+        console.log("➡️ Sending order to manager:", managerId);
         await bot.sendMessage(
           managerId,
           `🆕 Нове можливе замовлення від ${userName || 'Клієнт'} (ID: ${chatId}):\n\n${text}`,
@@ -2434,6 +2437,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
