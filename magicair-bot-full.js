@@ -268,13 +268,135 @@ const prefilterMenu = {
 };
 
 // ========== HELPERS ==========
-// ========== HELPERS ==========
 function isWorkingHours() {
     const now = new Date();
     const kievTime = new Date(now.toLocaleString("en-US", {timeZone: "Europe/Kiev"}));
     const hours = kievTime.getHours();
     
     return hours >= WORKING_HOURS.start && hours < WORKING_HOURS.end;
+}
+
+// ========== VALIDATION FUNCTIONS ==========
+function validatePhone(phone) {
+  if (!phone || typeof phone !== 'string') return { isValid: false, error: 'Номер телефону не може бути пустим' };
+  
+  const cleanPhone = phone.replace(/[\s\-\(\)\+]/g, '');
+  
+  // Проверяем украинские номера
+  let isValid = false;
+  let normalizedPhone = '';
+  
+  if (cleanPhone.startsWith('380')) {
+    isValid = /^380[0-9]{9}$/.test(cleanPhone) && cleanPhone.length === 12;
+    normalizedPhone = '+' + cleanPhone;
+  } else if (cleanPhone.startsWith('0')) {
+    isValid = /^0[0-9]{9}$/.test(cleanPhone) && cleanPhone.length === 10;
+    normalizedPhone = '+38' + cleanPhone;
+  } else if (cleanPhone.length === 9) {
+    // Номер без кода страны и без 0
+    isValid = /^[0-9]{9}$/.test(cleanPhone);
+    normalizedPhone = '+380' + cleanPhone;
+  }
+  
+  if (!isValid) {
+    return {
+      isValid: false,
+      error: 'Невірний формат номера телефону.\n\nПриклади правильного формату:\n• +380501234567\n• 0501234567\n• 380501234567\n\nСпробуйте ще раз:'
+    };
+  }
+  
+  return { isValid: true, normalizedPhone };
+}
+
+function validateBirthday(date) {
+  if (!date || typeof date !== 'string') return { isValid: false, error: 'Дата не може бути пустою' };
+  
+  const match = date.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (!match) {
+    return {
+      isValid: false,
+      error: 'Невірний формат дати.\nВикористовуйте формат ДД.ММ.РРРР (наприклад: 15.03.1990):'
+    };
+  }
+  
+  const [_, day, month, year] = match;
+  const dayNum = parseInt(day);
+  const monthNum = parseInt(month);
+  const yearNum = parseInt(year);
+  
+  // Проверяем существование даты
+  const dateObj = new Date(yearNum, monthNum - 1, dayNum);
+  if (dateObj.getDate() !== dayNum || 
+      dateObj.getMonth() !== monthNum - 1 || 
+      dateObj.getFullYear() !== yearNum) {
+    return {
+      isValid: false,
+      error: 'Така дата не існує. Перевірте правильність введення:'
+    };
+  }
+  
+  // Проверяем разумные границы
+  const now = new Date();
+  const age = now.getFullYear() - yearNum;
+  
+  if (yearNum < 1900 || yearNum > now.getFullYear()) {
+    return {
+      isValid: false,
+      error: 'Рік народження повинен бути від 1900 до поточного року:'
+    };
+  }
+  
+  if (dateObj > now) {
+    return {
+      isValid: false,
+      error: 'Дата народження не може бути в майбутньому:'
+    };
+  }
+  
+  if (age > 120) {
+    return {
+      isValid: false,
+      error: 'Перевірте правильність року народження:'
+    };
+  }
+  
+  return { isValid: true };
+}
+
+function validateName(name) {
+  if (!name || typeof name !== 'string') return { isValid: false, error: 'Ім\'я не може бути пустим' };
+  
+  const cleaned = name.trim().replace(/[<>\"']/g, '');
+  
+  if (cleaned.length < 1) {
+    return { isValid: false, error: 'Ім\'я не може бути пустим' };
+  }
+  
+  if (cleaned.length > 50) {
+    return { isValid: false, error: 'Ім\'я надто довге (максимум 50 символів)' };
+  }
+  
+  // Только буквы, пробелы, дефисы, апострофы
+  if (!/^[а-яїієґА-ЯЇІЄҐA-Za-z\s\-']+$/.test(cleaned)) {
+    return {
+      isValid: false,
+      error: 'Ім\'я може містити тільки букви, пробіли та дефіси:'
+    };
+  }
+  
+  return { isValid: true, cleanedName: cleaned };
+}
+
+function sanitizeMessage(message) {
+  if (!message || typeof message !== 'string') return '';
+  
+  // Убираем потенциально опасные HTML теги и скрипты
+  return message
+    .replace(/<script[^>]*>.*?<\/script>/gi, '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/javascript:/gi, '')
+    .trim()
+    .substring(0, 4000); // Ограничиваем длину
 }
 
 // ======= УЛУЧШЕННАЯ функция распознавания заказов =======
@@ -1137,7 +1259,13 @@ async function showProfile(chatId) {
 async function startProfileCreation(chatId) {
   userStates[chatId] = { step: 'profile_name' };
   await bot.sendMessage(chatId,
-    '📝 Давайте заповнимо ваш профіль!\n\nКрок 1/3: Як вас звати?'
+    '📝 Давайте заповнимо ваш профіль!\n\n' +
+    'Це допоможе нам:\n' +
+    '• Надавати персональні знижки\n' +
+    '• Відправляти вітання з днем народження\n' +
+    '• Краще обслуговувати ваші замовлення\n\n' +
+    '👤 Крок 1/3: Як вас звати?\n' +
+    '(введіть ваше ім\'я або ім\'я та прізвище)'
   );
 }
 
@@ -1150,38 +1278,50 @@ async function handleProfileInput(chatId, text, step) {
       holidayNotifications: []
     };
   }
+
+  // Санитизация входящего текста
+  const sanitizedText = sanitizeMessage(text);
+  
   switch (step) {
-    case 'profile_name':
-      userProfiles[chatId].name = text;
+    case 'profile_name': {
+      const validation = validateName(sanitizedText);
+      if (!validation.isValid) {
+        await bot.sendMessage(chatId, validation.error);
+        return;
+      }
+      
+      userProfiles[chatId].name = validation.cleanedName;
       userStates[chatId].step = 'profile_phone';
       await bot.sendMessage(chatId,
         '📞 Крок 2/3: Введіть ваш номер телефону:\n(формат: +380XXXXXXXXX)'
       );
       await syncProfileToDB(chatId);
       break;
-    case 'profile_phone':
-      const phoneRegex = /^(\+380|380|0)?[0-9]{9}$/;
-      if (!phoneRegex.test(text.replace(/[\s\-\(\)]/g, ''))) {
-        await bot.sendMessage(chatId,
-          '❌ Невірний формат номера.\nСпробуйте ще раз (приклад: +380501234567):'
-        );
+    }
+    
+    case 'profile_phone': {
+      const validation = validatePhone(sanitizedText);
+      if (!validation.isValid) {
+        await bot.sendMessage(chatId, validation.error);
         return;
       }
-      userProfiles[chatId].phone = text;
+      
+      userProfiles[chatId].phone = validation.normalizedPhone;
       userStates[chatId].step = 'profile_birthday';
       await bot.sendMessage(chatId,
         '🎂 Крок 3/3: Введіть дату вашого народження:\n(формат: ДД.MM.YYYY, приклад: 15.03.1990)'
       );
       await syncProfileToDB(chatId);
       break;
+    }
+    
     case 'profile_birthday': {
-      const dateRegex = /^(\d{2})\.(\d{2})\.(\d{4})$/;
-      if (!dateRegex.test(text)) {
-        await bot.sendMessage(chatId,
-          '❌ Невірний формат дати.\nСпробуйте ще раз (приклад: 15.03.1990):'
-        );
+      const validation = validateBirthday(sanitizedText);
+      if (!validation.isValid) {
+        await bot.sendMessage(chatId, validation.error);
         return;
       }
+      
       const profile = userProfiles[chatId];
       const now = Date.now();
       if (profile.birthday_changed_at && (now - profile.birthday_changed_at) < 365 * 24 * 60 * 60 * 1000) {
@@ -1190,13 +1330,20 @@ async function handleProfileInput(chatId, text, step) {
         delete userStates[chatId];
         return;
       }
-      userProfiles[chatId].birthday = text;
-     userProfiles[chatId].birthday_changed_at = Date.now();
+      
+      userProfiles[chatId].birthday = sanitizedText;
+      userProfiles[chatId].birthday_changed_at = Date.now();
       delete userStates[chatId];
-      await saveData(); // 💾 Сохраняем профиль сразу!
-      await syncProfileToDB(chatId); // 🆕 Синхронизируем с БД!
+      
+      await saveData();
+      await syncProfileToDB(chatId);
+      
       await bot.sendMessage(chatId,
-        '✅ Профіль успішно створено!\n\nТепер ви будете отримувати:\n• 🎁 Персональні знижки\n• 🎂 Вітання з днем народження\n• 🎊 Спеціальні пропозиції до свят',
+        '✅ Профіль успішно створено!\n\n' +
+        'Тепер ви будете отримувати:\n' +
+        '• 🎁 Персональні знижки\n' +
+        '• 🎂 Вітання з днем народження\n' +
+        '• 🎊 Спеціальні пропозиції до свят',
         mainMenu
       );
       break;
@@ -1426,12 +1573,28 @@ async function sendInteractiveFAQ(chatId) {
 }
 
 async function handleSearch(chatId, query) {
+  const sanitizedQuery = sanitizeMessage(query);
+  
+  if (sanitizedQuery.length < 4) {
+    await bot.sendMessage(chatId, 
+      '🔍 Пошуковий запит надто короткий.\nВведіть мінімум 4 символи:'
+    );
+    return;
+  }
+  
+  if (sanitizedQuery.length > 30) {
+    await bot.sendMessage(chatId, 
+      '🔍 Пошуковий запит надто довгий.\nМаксимум 30 символів:'
+    );
+    return;
+  }
+
   await bot.sendMessage(chatId, '🔍 Шукаємо...');
 
-  const searchUrl = `https://magicair.com.ua/katalog/search/?q=${encodeURIComponent(query)}`;
+  const searchUrl = `https://magicair.com.ua/katalog/search/?q=${encodeURIComponent(sanitizedQuery)}`;
 
   await bot.sendMessage(chatId,
-    `🔍 Результати пошуку "${query}":`,
+    `🔍 Результати пошуку "${sanitizedQuery}":`,
     {
       reply_markup: {
         inline_keyboard: [
@@ -1443,7 +1606,6 @@ async function handleSearch(chatId, query) {
     }
   );
 }
-
 // ========== ИСПРАВЛЕННЫЕ ФУНКЦИИ МЕНЕДЖЕРА ==========
 async function forwardToManager(clientId, text, userName) {
   const managerId = userStates[clientId]?.managerId;
@@ -1835,27 +1997,36 @@ async function handleEventFilter(chatId, messageId) {
 
 // ========== НОВАЯ ФУНКЦИЯ ДЛЯ УМНЫХ ОТВЕТОВ AI ==========
 async function handleGeneralMessage(chatId, text, userName) {
-  // Эта функция будет вызываться, когда клиент отправляет любой текст,
-  // который не является командой или частью диалога с менеджером.
+  // Санитизация входящего текста
+  const sanitizedText = sanitizeMessage(text);
+  const sanitizedUserName = sanitizeMessage(userName);
+  
+  if (!sanitizedText || sanitizedText.length < 1) {
+    await bot.sendMessage(chatId, 'Повідомлення не може бути пустим.');
+    return;
+  }
+  
+  // Эта функция будет вызываться, когда клиент отправляет любой текст,
+  // который не является командой или частью диалога с менеджером.
 
-  // 1. Проверяем, есть ли подключение к OpenAI
-  if (openai) {
-    const userProfile = userProfiles[chatId] || {};
-    const now = Date.now();
-    const lastActivity = userProfile.lastActivity || 0;
-    const timeSinceLastMessage = now - lastActivity;
+  // 1. Проверяем, есть ли подключение к OpenAI
+  if (openai) {
+    const userProfile = userProfiles[chatId] || {};
+    const now = Date.now();
+    const lastActivity = userProfile.lastActivity || 0;
+    const timeSinceLastMessage = now - lastActivity;
 
-    const greetingThreshold = 5 * 60 * 60 * 1000; // 5 часов в миллисекундах
-    const shouldGreet = timeSinceLastMessage > greetingThreshold;
-    
-    // Проверяем, содержит ли сообщение приветствие
-    const greetingWords = ['привіт', 'привет', 'добрий день', 'добрий ранок', 'добрий вечір', 'здравствуйте', 'вітаю', 'доброго дня', 'добрый день', 'добрый вечер'];
-    const messageContainsGreeting = greetingWords.some(word =>
-      text.toLowerCase().includes(word)
-    );
-    
-    // Определяем, нужно ли приветствовать
-    const shouldRespondWithGreeting = shouldGreet || messageContainsGreeting;
+    const greetingThreshold = 5 * 60 * 60 * 1000; // 5 часов в миллисекундах
+    const shouldGreet = timeSinceLastMessage > greetingThreshold;
+    
+    // Проверяем, содержит ли сообщение приветствие
+    const greetingWords = ['привіт', 'привет', 'добрий день', 'добрий ранок', 'добрий вечір', 'здравствуйте', 'вітаю', 'доброго дня', 'добрый день', 'добрый вечер'];
+    const messageContainsGreeting = greetingWords.some(word =>
+      sanitizedText.toLowerCase().includes(word)
+    );
+    
+    // Определяем, нужно ли приветствовать
+    const shouldRespondWithGreeting = shouldGreet || messageContainsGreeting;
     
  // 2. Створюємо промпт з інструкціями для AI
 const systemPrompt = `
@@ -1877,7 +2048,7 @@ const systemPrompt = `
 7.  **Завершення:** Після відповіді на складне питання, завжди пропонуй консультацію менеджера, щоб клієнт міг отримати повну інформацію.
 8.  **Привітання:** ${shouldRespondWithGreeting ? 'Привіт! Радий бачити вас у MagicAir. Чим можу допомогти?' : 'Не використовуй привітання. Просто відповідай на питання.'}
 9. **Пошук наборів та букетів:** Якщо клієнт запитує про готові набори кульок або букети для дівчинки/хлопчика, надавай посилання на каталог, де зібрані букети та набори. Використовуй посилання у форматі Markdown: [Готові набори та букети](https://magicair.com.ua/bukety-sharov/).
-10. **Ім'я:** Якщо відоме ім’я клієнта (${userName || "невідомо"}), іноді використовуй його у відповідях, щоб зробити спілкування більш дружнім.
+10. **Ім'я:** Якщо відоме ім'я клієнта (${sanitizedUserName || "невідомо"}) іноді використовуй його у відповідях, щоб зробити спілкування більш дружнім.
 11. **Самовивіз:** Якщо клієнт питає про самовивіз, завжди уточнюй: з якого магазину — Теремки чи Оболонь.
 12. **Посилання на категорії:** Якщо клієнт питає про латексні кулі, кулі з малюнком, кулі з конфеті, агат/браш, кулі з бантиками, фольговані фігури, фольговані цифри, ходячі фігури, фольговані з малюнком, серця чи зірки однотонні, набори кульок, сюрприз коробки, фотозону, святкові свічки, аромадифузори або декор для свята — завжди додавай посилання на відповідний розділ з <data>.
 13. **Замовлення:** Якщо клієнт пише повідомлення у форматі замовлення (наприклад: «хочу замовити 10 кульок завтра о 15:00»), не оформлюй його самостійно. Завжди відповідай клієнту, що передаєш замовлення менеджеру для підтвердження, та автоматично перенаправляй це повідомлення менеджеру. Також повідом клієнту, що він може самостійно оформити замовлення на нашому сайті: [MagicAir](https://magicair.com.ua).
@@ -1943,13 +2114,13 @@ const systemPrompt = `
     
     try {
       // 3. Отправляем промпт и вопрос клиента в OpenAI
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: text }
-        ]
-      });
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: sanitizedText }
+        ]
+      });
       
       
       // 4. Получаем ответ от AI и отправляем с пометкой
@@ -2375,11 +2546,14 @@ async function loadData() {
 
 // ========== LOGGING ==========
 async function logMessage(from, to, message, type) {
+  // Санитизируем сообщение для безопасного хранения
+  const sanitizedMessage = sanitizeMessage(message);
+  
   // Сохраняем в массив для совместимости
   messageLog.push({
     from,
     to,
-    message: message.substring(0, 100),
+    message: sanitizedMessage.substring(0, 100),
     type,
     timestamp: Date.now()
   });
@@ -2389,16 +2563,16 @@ async function logMessage(from, to, message, type) {
     messageLog.splice(0, messageLog.length - MAX_LOG_SIZE);
   }
 
-  // 🆕 СОХРАНЯЕМ В БД
+  // Сохраняем в БД
   if (pool) {
     try {
       await pool.query(
         `INSERT INTO messages (from_id, to_id, message, type)
          VALUES ($1, $2, $3, $4)`,
-        [from, to, message.substring(0, 500), type]
+        [from, to, sanitizedMessage.substring(0, 500), type]
       );
     } catch (err) {
-      console.error("❌ Ошибка логирования в БД:", err.message);
+      console.error("⌫ Помилка логування в БД:", err.message);
     }
   }
 }
@@ -2523,6 +2697,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
