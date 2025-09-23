@@ -404,67 +404,62 @@ function isOrderMessage(text) {
   if (!text) return false;
   const t = text.toLowerCase();
 
-  // группа 1: прямые действия заказа
   const directOrderKeywords = [
     "замовити", "замовлення", "замовлю", "заказать",
     "хочу замовити", "купити", "придбати",
     "доставка", "доставку", "привезіть", "можна доставку"
   ];
 
-  // группа 2: товары
   const itemKeywords = [
     "кулі", "шари", "повітряні кулі", "гелієві кулі", "набір", "шарики",
     "цифри", "фігури", "кульок", "шт", "штук", "латексні", "фольговані",
     "однотонні", "з малюнком", "з конфеті", "агат", "браш", "з бантиками"
   ];
 
-  // группа 3: контекстные слова заказа
   const contextOrderKeywords = [
     "завтра", "сьогодні", "на", "о", "через", "годину", "хвилин",
     "різнокольорові", "кольорових", "штук", "шт"
   ];
 
-  // группа 4: уточнения после предыдущего заказа
   const specificationKeywords = [
     "латексні", "фольговані", "різнокольорові", "однотонні", "з малюнком",
     "цифри", "фігури", "серця", "зірки", "з конфеті", "агат", "браш"
   ];
 
-  // 🚫 Исключения — FAQ / вопросы не являющиеся заказом
   const faqQuestions = [
-    // цены
     "скільки коштує", "яка ціна", "скільки буде", "скільки коштують", "ціна",
-    // ассортимент / каталог
     "які є", "які бувають", "показати варіанти", "каталог", "асортимент",
-    // оплата
     "як оплатити", "оплата", "можна карткою", "передоплата", "накладений платіж",
-    // доставка (информационные вопросы)
     "чи є доставка", "скільки доставка", "як працює доставка", "чи доставляєте",
-    // самовывоз / адреса
     "самовивіз", "з якого магазину", "де забрати", "адреса", "де знаходитеся",
-    // график
     "о котрій", "коли працюєте", "години роботи", "чи працюєте сьогодні", "чи працюєте завтра",
-    // прочее информационные вопросы
     "чи є гарантія", "з чого зроблені", "якої якості", "чи безпечні", "скільки тримаються"
   ];
   if (faqQuestions.some(q => t.includes(q))) return false;
 
-  // основная проверка
   const hasDirectAction = directOrderKeywords.some(kw => t.includes(kw));
   const hasItem = itemKeywords.some(kw => t.includes(kw));
   const hasContext = contextOrderKeywords.some(kw => t.includes(kw));
 
-  // ✅ Основной заказ: действие + товар
   if (hasDirectAction && hasItem) return true;
-
-  // ✅ Заказ с контекстом (например: "10 кульок завтра")
   if (hasItem && hasContext) return true;
 
-  // ✅ Уточнение типа товара (когда клиент уже в процессе заказа)
   const isSpecification = specificationKeywords.some(kw => t.includes(kw));
   if (isSpecification && (hasItem || t.includes("колір") || /\d+/.test(t))) return true;
 
   return false;
+}
+
+// ======= Новая проверка полноты заказа =======
+function isCompleteOrder(text) {
+  const t = text.toLowerCase();
+
+  const hasQuantity = /\d+/.test(t) || t.includes("шт") || t.includes("штук");
+  const hasType = /(латексні|фольговані|цифри|фігури|різнокольрові|однотон)/.test(t);
+  const hasDate = /(сьогодні|завтра|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})/.test(t);
+  const hasStore = /(оболонь|теремки|самовивіз)/.test(t);
+
+  return hasQuantity || hasType || hasDate || hasStore;
 }
 
 
@@ -620,67 +615,77 @@ if (isThanksMessage(text)) {
   const isOrderClarif = isOrderClarification(text, chatId);
   
   // Если это прямой заказ или уточнение к заказу
-  if (isDirectOrder || isOrderClarif) {
-    console.log(`📦 Order/clarification detected from ${chatId}, text: ${text}`);
-    
-    // Обеспечиваем профиль
-    if (!userProfiles[chatId]) {
-      userProfiles[chatId] = { 
-        chatId, 
-        created: Date.now(), 
-        notifications: true, 
-        holidayNotifications: [] 
-      };
-    }
-    
-    // Обновляем информацию о заказе
-    userProfiles[chatId].lastOrder = text;
-    userProfiles[chatId].lastMessage = text;
-    userProfiles[chatId].lastActivity = Date.now();
-    userProfiles[chatId].lastOrderTime = Date.now(); // НОВОЕ: отмечаем время заказа
-    
-    // Ответ клиенту зависит от типа сообщения
-    let clientResponse;
-    if (isDirectOrder) {
-      clientResponse = "✅ Дякуємо! Я передаю ваше замовлення менеджеру для підтвердження. Незабаром з вами зв'яжуться.\n\n" +
-                      "🌐 Або ви можете оформити замовлення самостійно: https://magicair.com.ua";
-    } else {
-      clientResponse = "✅ Передаю ваше уточнення менеджеру. Він зв'яжеться з вами найближчим часом.\n\n" +
-                      "🌐 Або перегляньте каталог: https://magicair.com.ua";
-    }
-    
-    await bot.sendMessage(chatId, clientResponse);
+if (isDirectOrder || isOrderClarif) {
+  console.log(`📦 Order/clarification detected from ${chatId}, text: ${text}`);
 
-    // Делаем клиента видимым в списке ожидания
-    waitingClients.add(chatId);
-
-    // Уведомляем менеджеров
-    const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
-    const notifyList = freeManagers.length ? freeManagers : MANAGERS;
-    console.log("🔔 Managers to notify:", notifyList);
-
-    for (const managerId of notifyList) {
-      try {
-        console.log("➡️ Sending order/clarification to manager:", managerId);
-        const messageType = isDirectOrder ? "нове замовлення" : "уточнення до замовлення";
-        await bot.sendMessage(
-          managerId,
-          `🆕 Отримано ${messageType} від ${userName || 'Клієнт'} (ID: ${chatId}):\n\n${text}`,
-          {
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
-              ]
-            }
-          }
-        );
-      } catch (err) {
-        console.error('Failed to notify manager', managerId, err?.message || err);
-      }
-    }
-
-    return; // Останавливаем дальнейшую обработку
+  // Обеспечиваем профиль
+  if (!userProfiles[chatId]) {
+    userProfiles[chatId] = { 
+      chatId, 
+      created: Date.now(), 
+      notifications: true, 
+      holidayNotifications: [] 
+    };
   }
+
+  // Обновляем информацию о заказе
+  userProfiles[chatId].lastOrder = text;
+  userProfiles[chatId].lastMessage = text;
+  userProfiles[chatId].lastActivity = Date.now();
+  userProfiles[chatId].lastOrderTime = Date.now();
+
+  // 🚩 Проверка: есть ли в тексте конкретика (цифры/тип/дата/магазин)
+  const hasDetails = /\d+/.test(text) || /(латексні|фольговані|цифри|фігури|оболонь|теремки|сьогодні|завтра)/i.test(text);
+
+  if (!hasDetails) {
+    // ❌ Нет деталей → задаём уточняющий вопрос, менеджеру не пишем
+    await bot.sendMessage(
+      chatId,
+      "Будь ласка, уточніть кількість, тип кульок або дату доставки 🎈"
+    );
+    return;
+  }
+
+  // ✅ Есть детали → можно уведомлять менеджеров
+  let clientResponse;
+  if (isDirectOrder) {
+    clientResponse = "✅ Дякуємо! Я передаю ваше замовлення менеджеру для підтвердження. Незабаром з вами зв'яжуться.\n\n" +
+                    "🌐 Або ви можете оформити замовлення самостійно: https://magicair.com.ua";
+  } else {
+    clientResponse = "✅ Передаю ваше уточнення менеджеру. Він зв'яжеться з вами найближчим часом.\n\n" +
+                    "🌐 Або перегляньте каталог: https://magicair.com.ua";
+  }
+
+  await bot.sendMessage(chatId, clientResponse);
+
+  waitingClients.add(chatId);
+
+  const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
+  const notifyList = freeManagers.length ? freeManagers : MANAGERS;
+  console.log("🔔 Managers to notify:", notifyList);
+
+  for (const managerId of notifyList) {
+    try {
+      console.log("➡️ Sending order/clarification to manager:", managerId);
+      const messageType = isDirectOrder ? "нове замовлення" : "уточнення до замовлення";
+      await bot.sendMessage(
+        managerId,
+        `🆕 Отримано ${messageType} від ${userName || 'Клієнт'} (ID: ${chatId}):\n\n${text}`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
+            ]
+          }
+        }
+      );
+    } catch (err) {
+      console.error('Failed to notify manager', managerId, err?.message || err);
+    }
+  }
+
+  return;
+}
 
   switch (text) {
     case '🛒 Каталог':
@@ -2718,6 +2723,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
