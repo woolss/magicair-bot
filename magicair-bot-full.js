@@ -610,7 +610,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // Якщо повідомлення містить фото → окрема обробка
+  // Якщо є фото → спеціальна обробка
   if (msg.photo) {
     return await handlePhotoMessage(msg);
   }
@@ -631,7 +631,12 @@ bot.on('message', async (msg) => {
     if (isManager(chatId)) {
       await handleManagerMessage(msg);
     } else {
-      await handleClientMessage(msg);
+      // Якщо очікується уточнення після фото
+      if (userProfiles[chatId]?.pendingPhotoOrder) {
+        await handlePhotoClarification(chatId, text, userName);
+      } else {
+        await handleClientMessage(msg);
+      }
     }
   } catch (error) {
     console.error('⚠ Message error:', error);
@@ -644,23 +649,17 @@ async function handlePhotoMessage(msg) {
   const chatId = msg.chat.id;
   const userName = msg.from.first_name || 'Клієнт';
   const caption = msg.caption || '';
-
-  // Беремо найякісніше фото (останнє у масиві)
   const fileId = msg.photo[msg.photo.length - 1].file_id;
 
   console.log(`📷 Фото отримано від ${chatId} (${userName}): ${caption}`);
 
   if (!userProfiles[chatId]) {
-    userProfiles[chatId] = { chatId, clarifications: [] };
+    userProfiles[chatId] = { chatId, created: Date.now(), clarifications: [] };
   }
-  userProfiles[chatId].lastPhotoOrder = fileId;
-
-  // Ключові слова замовлення
-  const orderKeywords = ["кулі", "шари", "шарики", "гелієві", "набір", "цифри", "фігури"];
-  const isOrderPhoto = caption && orderKeywords.some(kw => caption.toLowerCase().includes(kw));
 
   if (!caption) {
-    // 📌 Фото без опису → просимо уточнити дату і доставку
+    // Фото без опису → чекаємо уточнення
+    userProfiles[chatId].pendingPhotoOrder = { fileId };
     await bot.sendMessage(chatId,
       "📷 Ви надіслали фото кульок. Щоб оформити замовлення, уточніть, будь ласка:\n\n" +
       "📅 На коли потрібна доставка?\n" +
@@ -669,12 +668,62 @@ async function handlePhotoMessage(msg) {
     return;
   }
 
-  if (isOrderPhoto) {
-    await forwardPhotoOrderToManagers(chatId, userName, fileId, caption);
-  } else {
-    await bot.sendMessage(chatId,
-      "📷 Фото отримано! Якщо хочете оформити замовлення за фото — уточніть кілька деталей 😉"
-    );
+  // Фото з підписом → одразу менеджеру
+  await bot.sendMessage(chatId,
+    "✅ Дякуємо! Я передаю ваше фото та коментар менеджеру для підтвердження.\n\n" +
+    "🌐 Ви також можете оформити замовлення самостійно: https://magicair.com.ua"
+  );
+
+  waitingClients.add(chatId);
+  const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
+  const notifyList = freeManagers.length ? freeManagers : MANAGERS;
+
+  for (const managerId of notifyList) {
+    try {
+      await bot.sendPhoto(managerId, fileId, {
+        caption: `🆕 Фото-замовлення від ${userName} (ID: ${chatId}):\n\n${caption}`,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
+          ]
+        }
+      });
+    } catch (err) {
+      console.error('Failed to notify manager with photo', managerId, err?.message || err);
+    }
+  }
+}
+
+// ===================== ОБРОБКА УТОЧНЕННЯ ДО ФОТО =====================
+async function handlePhotoClarification(chatId, text, userName) {
+  const pending = userProfiles[chatId]?.pendingPhotoOrder;
+  if (!pending) return;
+
+  const fileId = pending.fileId;
+  delete userProfiles[chatId].pendingPhotoOrder;
+
+  await bot.sendMessage(chatId,
+    "✅ Дякуємо! Я передаю ваше фото та уточнення менеджеру.\n\n" +
+    "🌐 Ви також можете оформити замовлення самостійно: https://magicair.com.ua"
+  );
+
+  waitingClients.add(chatId);
+  const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
+  const notifyList = freeManagers.length ? freeManagers : MANAGERS;
+
+  for (const managerId of notifyList) {
+    try {
+      await bot.sendPhoto(managerId, fileId, {
+        caption: `🆕 Фото-замовлення з уточненням від ${userName} (ID: ${chatId}):\n\n${text}`,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
+          ]
+        }
+      });
+    } catch (err) {
+      console.error('Failed to notify manager with photo clarification', managerId, err?.message || err);
+    }
   }
 }
 
@@ -2917,6 +2966,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
