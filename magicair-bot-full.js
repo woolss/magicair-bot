@@ -598,7 +598,6 @@ bot.onText(/\/start/, async (msg) => {
 // ========== MESSAGES ==========
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
-  const text = msg.text || '';
   const userName = msg.from.first_name || 'Клієнт';
 
   // 🚫 Антиспам-перевірка
@@ -610,6 +609,13 @@ bot.on('message', async (msg) => {
     ).catch(() => {});
     return;
   }
+
+  // Якщо повідомлення містить фото
+  if (msg.photo) {
+    return await handlePhotoMessage(msg);
+  }
+
+  const text = msg.text || '';
 
   // Обробка команд
   if (text && text.startsWith('/')) {
@@ -632,6 +638,65 @@ bot.on('message', async (msg) => {
     await bot.sendMessage(chatId, '⚠ Помилка. Спробуйте /start').catch(() => {});
   }
 });
+
+// ===================== ОБРОБКА ФОТО =====================
+async function handlePhotoMessage(msg) {
+  const chatId = msg.chat.id;
+  const userName = msg.from.first_name || 'Клієнт';
+  const caption = msg.caption || '';
+
+  // Беремо найякісніше фото (останнє у масиві)
+  const fileId = msg.photo[msg.photo.length - 1].file_id;
+
+  console.log(`📷 Фото отримано від ${chatId} (${userName}): ${caption}`);
+
+  // Ключові слова замовлення
+  const orderKeywords = ["кулі", "шари", "шарики", "гелієві", "набір", "цифри", "фігури"];
+
+  const isOrderPhoto = caption && orderKeywords.some(kw => caption.toLowerCase().includes(kw));
+
+  if (!caption) {
+    // 📌 Фото без опису → просимо уточнити
+    await bot.sendMessage(chatId,
+      "📷 Ви надіслали фото. Щоб оформити замовлення, будь ласка, уточніть у повідомленні:\n\n" +
+      "📦 кількість кульок\n🎈 тип (латексні/фольговані/фігури/цифри)\n📅 дата\n📍 доставка чи самовивіз"
+    );
+    return;
+  }
+
+  if (isOrderPhoto) {
+    // ✅ Це схоже на замовлення
+    await bot.sendMessage(chatId,
+      "✅ Дякуємо! Я передаю ваше фото та коментар менеджеру для підтвердження.\n\n" +
+      "🌐 Ви також можете оформити замовлення самостійно: https://magicair.com.ua"
+    );
+
+    waitingClients.add(chatId);
+
+    const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
+    const notifyList = freeManagers.length ? freeManagers : MANAGERS;
+
+    for (const managerId of notifyList) {
+      try {
+        await bot.sendPhoto(managerId, fileId, {
+          caption: `🆕 Фото-замовлення від ${userName} (ID: ${chatId}):\n\n${caption}`,
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
+            ]
+          }
+        });
+      } catch (err) {
+        console.error('Failed to notify manager with photo', managerId, err?.message || err);
+      }
+    }
+  } else {
+    // 🤖 Фото з підписом, але не схоже на замовлення
+    await bot.sendMessage(chatId,
+      "📷 Фото отримано! Якщо хочете оформити замовлення за фото — уточніть кілька деталей 😉"
+    );
+  }
+}
 
 // ===================== ОБРОБКА ПРЯМОГО ЗАМОВЛЕННЯ =====================
 async function handleDirectOrder(chatId, text, userName) {
@@ -2837,6 +2902,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
