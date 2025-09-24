@@ -583,58 +583,18 @@ bot.on('message', async (msg) => {
   }
 });
 
-// ========== CLIENT HANDLER ==========
-async function handleClientMessage(msg) {
-  const chatId = msg.chat.id;
-  const text = msg.text || '';
-  const userName = msg.from.first_name || 'Клієнт';
-
-  if (userProfiles[chatId]) userProfiles[chatId].lastActivity = Date.now();
-
-  // Проверяем, находится ли клиент в активном чате с менеджером
-  if (userStates[chatId]?.step === 'manager_chat') {
-    // Если клиент прислал "Главное меню", завершаем чат
-    if (text === '🏠 Головне меню') {
-      await handleEndCommand(chatId);
-      return;
-    }
-    // В противном случае, пересылаем сообщение менеджеру
-    await forwardToManager(chatId, text, userName);
-    return;
-  }
-  // --- NEW: если это благодарность ---
-if (isThanksMessage(text)) {
-  await bot.sendMessage(chatId, "💜 Дякуємо і вам! Радий був допомогти 🎈");
-  return;
-}
-  
-  // --- УЛУЧШЕННАЯ ЛОГИКА РАСПОЗНАВАНИЯ ЗАКАЗОВ ---
-const isDirectOrder = isOrderMessage(text);
-const isOrderClarif = isOrderClarification(text, chatId);
-
-// Обеспечиваем профиль клиента
-if (!userProfiles[chatId]) {
-  userProfiles[chatId] = { 
-    chatId, 
-    created: Date.now(), 
-    notifications: true, 
-    holidayNotifications: [],
-    clarifications: [] 
-  };
-}
-
-// ===================== ПРЯМОЙ ЗАКАЗ =====================
-if (isDirectOrder) {
+// ===================== ОБРОБКА ПРЯМОГО ЗАМОВЛЕННЯ =====================
+async function handleDirectOrder(chatId, text, userName) {
   console.log(`📦 Direct order detected from ${chatId}, text: ${text}`);
 
-  // Профиль клиента
+  // Профіль клієнта
   userProfiles[chatId].lastOrder = text;
   userProfiles[chatId].lastMessage = text;
   userProfiles[chatId].lastActivity = Date.now();
   userProfiles[chatId].lastOrderTime = Date.now();
-  userProfiles[chatId].clarifications = []; // сбрасываем на всякий случай
+  userProfiles[chatId].clarifications = []; // скидаємо на всяк випадок
 
-  // 🚩 Проверка: есть ли в тексте конкретика
+  // 🚩 Перевірка деталей
   const hasQuantity = /\d+/.test(text) || /штук|шт\b/i.test(text);
   const hasSpecificType = /(латексні|фольговані|цифри|фігури|ходячі|серця|зірки|однотонні|з малюнком|з конфеті|агат|браш|з бантиками)/i.test(text);
   const hasDate = /(сьогодні|завтра|післязавтра|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})/i.test(text);
@@ -643,28 +603,27 @@ if (isDirectOrder) {
   const detailsCount = [hasQuantity, hasSpecificType, hasDate, hasStore].filter(Boolean).length;
   const hasEnoughDetails = detailsCount >= 2;
 
-  // ❗ Если деталей мало → даём ранний фидбек
+  // ❗ Якщо деталей замало → просимо уточнити
   if (!hasEnoughDetails) {
-    let clarificationMessage = "✅ Я вже зафіксував ваше замовлення! ";
-    clarificationMessage += "Щоб передати його менеджеру, уточніть, будь ласка:\n\n";
+    let clarificationMessage = "Для оформлення замовлення, будь ласка, уточніть:\n\n";
     if (!hasQuantity) clarificationMessage += "📦 Скільки кульок потрібно?\n";
     if (!hasSpecificType) clarificationMessage += "🎈 Які саме кульки: латексні, фольговані, цифри?\n";
     if (!hasDate) clarificationMessage += "📅 На коли потрібна доставка?\n";
     if (!hasStore) clarificationMessage += "📍 Доставка чи самовивіз (з якого магазину)?\n";
     clarificationMessage += "\nНапишіть всю інформацію в одному повідомленні, наприклад:\n";
     clarificationMessage += "\"10 латексних кульок на завтра, доставка\"";
+
     await bot.sendMessage(chatId, clarificationMessage);
     return;
   }
 
-  // ✅ Достатньо деталей → уведомляем менеджеров
+  // ✅ Якщо деталей достатньо → повідомляємо менеджерів
   await bot.sendMessage(chatId,
     "✅ Дякуємо! Я передаю ваше замовлення менеджеру для підтвердження. Незабаром з вами зв'яжуться.\n\n" +
     "🌐 Або ви можете оформити замовлення самостійно: https://magicair.com.ua"
   );
 
   waitingClients.add(chatId);
-
   const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
   const notifyList = freeManagers.length ? freeManagers : MANAGERS;
 
@@ -691,13 +650,11 @@ if (isDirectOrder) {
     }
   }
 
-  // 🔄 очищаем уточнения после отправки
-  userProfiles[chatId].clarifications = [];
-  return;
+  userProfiles[chatId].clarifications = []; // очищаємо уточнення
 }
 
-// ===================== УТОЧНЕНИЕ К ЗАКАЗУ =====================
-if (isOrderClarif) {
+// ===================== ОБРОБКА УТОЧНЕНЬ =====================
+async function handleOrderClarification(chatId, text, userName) {
   console.log(`✏️ Clarification detected from ${chatId}, text: ${text}`);
 
   userProfiles[chatId].clarifications.push(text);
@@ -720,14 +677,13 @@ if (isOrderClarif) {
     return;
   }
 
-  // ✅ Достатньо деталей → уведомляем менеджеров
+  // ✅ Достатньо деталей → повідомляємо менеджерів
   await bot.sendMessage(chatId,
     "✅ Передаю ваше уточнення менеджеру. Він зв'яжеться з вами найближчим часом.\n\n" +
     "🌐 Або перегляньте каталог: https://magicair.com.ua"
   );
 
   waitingClients.add(chatId);
-
   const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
   const notifyList = freeManagers.length ? freeManagers : MANAGERS;
 
@@ -754,11 +710,53 @@ if (isOrderClarif) {
     }
   }
 
-  // 🔄 очищаем уточнения после отправки
-  userProfiles[chatId].clarifications = [];
-  return;
+  userProfiles[chatId].clarifications = []; // очищаємо уточнення
 }
 
+// ===================== CLIENT HANDLER =====================
+async function handleClientMessage(msg) {
+  const chatId = msg.chat.id;
+  const text = msg.text || '';
+  const userName = msg.from.first_name || 'Клієнт';
+
+  if (userProfiles[chatId]) userProfiles[chatId].lastActivity = Date.now();
+
+  // Якщо клієнт у чаті з менеджером
+  if (userStates[chatId]?.step === 'manager_chat') {
+    if (text === '🏠 Головне меню') {
+      await handleEndCommand(chatId);
+      return;
+    }
+    await forwardToManager(chatId, text, userName);
+    return;
+  }
+
+  // --- NEW: вдячність ---
+  if (isThanksMessage(text)) {
+    await bot.sendMessage(chatId, "💜 Дякуємо і вам! Радий був допомогти 🎈");
+    return;
+  }
+
+  // --- Розпізнавання замовлення ---
+  const isDirectOrder = isOrderMessage(text);
+  const isOrderClarif = isOrderClarification(text, chatId);
+
+  // Профіль клієнта
+  if (!userProfiles[chatId]) {
+    userProfiles[chatId] = { 
+      chatId, 
+      created: Date.now(), 
+      notifications: true, 
+      holidayNotifications: [],
+      clarifications: [] 
+    };
+  }
+
+  // Обробка замовлення / уточнення
+  if (isDirectOrder) return await handleDirectOrder(chatId, text, userName);
+  if (isOrderClarif) return await handleOrderClarification(chatId, text, userName);
+
+  // --- Меню ---
   switch (text) {
     case '🛒 Каталог':
       await bot.sendMessage(chatId, '🛒 Каталог товарів MagicAir:\n\nОберіть категорію:', catalogMenu); return;
@@ -778,16 +776,15 @@ if (isOrderClarif) {
       userStates[chatId] = { step: 'search' };
       await bot.sendMessage(chatId, '🔍 Введіть назву товару для пошуку:'); return;
     case '💬 Менеджер':
-      // ИСПОЛЬЗУЕМ НОВУЮ ФУНКЦИЮ ПРОВЕРКИ ВРЕМЕНИ
       if (isWorkingHours()) {
-          await startPreFilter(chatId, userName);
+        await startPreFilter(chatId, userName);
       } else {
-          await bot.sendMessage(chatId,
-              `⏰ Ви звернулися в неробочий час.\n\n` +
-              `Графік роботи менеджерів: **з ${WORKING_HOURS.start}:00 до ${WORKING_HOURS.end}:00**.\n\n` +
-              `Чекаємо на вас завтра в робочий час!`,
-              { parse_mode: 'Markdown', ...mainMenu }
-          );
+        await bot.sendMessage(chatId,
+          `⏰ Ви звернулися в неробочий час.\n\n` +
+          `Графік роботи менеджерів: **з ${WORKING_HOURS.start}:00 до ${WORKING_HOURS.end}:00**.\n\n` +
+          `Чекаємо на вас завтра в робочий час!`,
+          { parse_mode: 'Markdown', ...mainMenu }
+        );
       }
       return;
     case '👤 Профіль':
@@ -2790,6 +2787,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
