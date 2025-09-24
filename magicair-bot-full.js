@@ -408,7 +408,7 @@ function isOrderMessage(text) {
   const directOrderKeywords = [
     "замовити", "замовлення", "замовлю", "заказать",
     "хочу замовити", "купити", "придбати",
-    "доставка", "доставку", "привезіть", "можна доставку"
+    "доставка", "доставку", "привезіть", "можна доставку", "хочу"
   ];
 
   // Ключевые слова товаров
@@ -429,10 +429,12 @@ function isOrderMessage(text) {
     "чи є гарантія", "з чого зроблені", "якої якості", "чи безпечні", "скільки тримаються"
   ];
 
+  // Якщо це FAQ вопрос → НЕ замовлення
   if (faqQuestions.some(q => t.includes(q))) {
     return false;
   }
 
+  // Перевірка: ключові слова дії + товар
   const hasDirectAction = directOrderKeywords.some(kw => t.includes(kw));
   const hasItem = itemKeywords.some(kw => t.includes(kw));
 
@@ -440,11 +442,9 @@ function isOrderMessage(text) {
     return true;
   }
 
-  // Особые случаи - короткие заказы типа "10 кульок на завтра"
-  const hasQuantityAndItem = /\d+\s*(штук|шт|кульок|кулі|шарів|цифр|фігур)/i.test(t);
-  const hasDeliveryTime = /(сьогодні|завтра|післязавтра|терміново|на \d+)/i.test(t);
-
-  if (hasQuantityAndItem && hasDeliveryTime) {
+  // Особі випадки — короткі замовлення типу "5 кульок", "10 шарів завтра"
+  const hasQuantityAndItem = /\d+\s*(штук|шт|кульок|кулі|шарів|шарики|цифр|фігур)/i.test(t);
+  if (hasQuantityAndItem) {
     return true;
   }
 
@@ -2787,6 +2787,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
