@@ -635,12 +635,14 @@ if (!userProfiles[chatId]) {
 if (isDirectOrder) {
   console.log(`📦 Direct order detected from ${chatId}, text: ${text}`);
 
+  // Профиль клиента
   userProfiles[chatId].lastOrder = text;
   userProfiles[chatId].lastMessage = text;
   userProfiles[chatId].lastActivity = Date.now();
   userProfiles[chatId].lastOrderTime = Date.now();
   userProfiles[chatId].clarifications = []; // сбрасываем на всякий случай
 
+  // 🚩 Проверка: есть ли в тексте конкретика
   const hasQuantity = /\d+/.test(text) || /штук|шт\b/i.test(text);
   const hasSpecificType = /(латексні|фольговані|цифри|фігури|ходячі|серця|зірки|однотонні|з малюнком|з конфеті|агат|браш|з бантиками)/i.test(text);
   const hasDate = /(сьогодні|завтра|післязавтра|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})/i.test(text);
@@ -649,8 +651,10 @@ if (isDirectOrder) {
   const detailsCount = [hasQuantity, hasSpecificType, hasDate, hasStore].filter(Boolean).length;
   const hasEnoughDetails = detailsCount >= 2;
 
+  // ❗ Если деталей мало → даём ранний фидбек
   if (!hasEnoughDetails) {
-    let clarificationMessage = "Для оформлення замовлення, будь ласка, уточніть:\n\n";
+    let clarificationMessage = "✅ Я вже зафіксував ваше замовлення! ";
+    clarificationMessage += "Щоб передати його менеджеру, уточніть, будь ласка:\n\n";
     if (!hasQuantity) clarificationMessage += "📦 Скільки кульок потрібно?\n";
     if (!hasSpecificType) clarificationMessage += "🎈 Які саме кульки: латексні, фольговані, цифри?\n";
     if (!hasDate) clarificationMessage += "📅 На коли потрібна доставка?\n";
@@ -2794,6 +2798,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
