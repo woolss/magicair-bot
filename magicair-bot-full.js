@@ -167,7 +167,8 @@ function checkRateLimit(chatId) {
 
   if (userLimit.count > MAX_MESSAGES_PER_MINUTE) {
     userLimit.blockedUntil = now + BLOCK_DURATION;
-    return { allowed: false, waitMinutes: 5 };
+    const remainingMinutes = Math.ceil(BLOCK_DURATION / 60000);
+    return { allowed: false, waitMinutes: remainingMinutes };
   }
 
   return { allowed: true };
@@ -2834,6 +2835,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
