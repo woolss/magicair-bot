@@ -833,17 +833,7 @@ async function handleOrderClarification(chatId, text, userName) {
     return;
   }
 
-  // Якщо є фото → відправляємо його з уточненням
-  if (userProfiles[chatId].lastPhotoOrder) {
-    await forwardPhotoOrderToManagers(
-      chatId,
-      userName,
-      userProfiles[chatId].lastPhotoOrder,
-      `Уточнення: ${text}`
-    );
-    return;
-  }
-
+  // ✅ Достатньо деталей → повідомляємо менеджерів
   await bot.sendMessage(chatId,
     "✅ Передаю ваше уточнення менеджеру. Він зв'яжеться з вами найближчим часом.\n\n" +
     "🌐 Або перегляньте каталог: https://magicair.com.ua"
@@ -2947,6 +2937,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
