@@ -681,6 +681,7 @@ async function handlePhotoMessage(msg) {
 
   // ⏱ фіксуємо час відправки
   userProfiles[chatId].lastOrderTime = Date.now();
+  userProfiles[chatId].lastPhotoOrder = { fileId, caption };
 }
 
 // ===================== ОБРОБКА УТОЧНЕННЯ ДО ФОТО =====================
@@ -717,6 +718,7 @@ async function handlePhotoClarification(chatId, text, userName) {
   // ✅ після відправки чистимо
   delete userProfiles[chatId].pendingPhotoOrder;
   userProfiles[chatId].lastOrderTime = Date.now();
+  userProfiles[chatId].lastPhotoOrder = { fileId, caption: text };
 }
 
 // ===================== ВІДПРАВКА ФОТО МЕНЕДЖЕРАМ =====================
@@ -747,6 +749,7 @@ async function forwardPhotoOrderToManagers(chatId, userName, fileId, caption) {
 
   // ✅ чистимо, щоб не висіло
   delete userProfiles[chatId].pendingPhotoOrder;
+  userProfiles[chatId].lastPhotoOrder = { fileId, caption };
 }
 
 // ===================== ОБРОБКА ПРЯМОГО ЗАМОВЛЕННЯ =====================
@@ -829,6 +832,39 @@ async function handleOrderClarification(chatId, text, userName) {
   userProfiles[chatId].lastMessage = text;
   userProfiles[chatId].lastActivity = Date.now();
 
+  const lastPhoto = userProfiles[chatId].lastPhotoOrder;
+  const lastOrderTime = userProfiles[chatId].lastOrderTime;
+
+  // Якщо останнім було фото-замовлення і ще не пройшла 1 хвилина
+  if (lastPhoto && lastOrderTime && Date.now() - lastOrderTime < 60 * 1000) {
+    await bot.sendMessage(chatId,
+      "✅ Додаю ваше уточнення до фото-замовлення. Менеджер його побачить.\n\n" +
+      "🌐 Ви також можете оформити замовлення самостійно: https://magicair.com.ua"
+    );
+
+    waitingClients.add(chatId);
+    const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
+    const notifyList = freeManagers.length ? freeManagers : MANAGERS;
+
+    for (const managerId of notifyList) {
+      try {
+        await bot.sendPhoto(managerId, lastPhoto.fileId, {
+          caption: `📷 Уточнення до фото-замовлення від ${userName} (ID: ${chatId}):\n\n📝 Початковий коментар: ${lastPhoto.caption || '(без коментаря)'}\n\n➡️ Нове уточнення: ${text}`,
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
+            ]
+          }
+        });
+      } catch (err) {
+        console.error('Failed to notify manager with photo clarification', managerId, err?.message || err);
+      }
+    }
+
+    return;
+  }
+
+  // ===== Інакше працюємо як звичайне текстове уточнення =====
   const hasQuantity = /\d+/.test(text) || /штук|шт\b/i.test(text);
   const hasSpecificType = /(латексні|фольговані|цифри|фігури|ходячі|серця|зірки|однотонні|з малюнком|з конфеті|агат|браш|з бантиками)/i.test(text);
   const hasDate = /(сьогодні|завтра|післязавтра|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})/i.test(text);
@@ -845,7 +881,6 @@ async function handleOrderClarification(chatId, text, userName) {
     return;
   }
 
-  // ✅ Достатньо деталей → повідомляємо менеджерів
   await bot.sendMessage(chatId,
     "✅ Передаю ваше уточнення менеджеру. Він зв'яжеться з вами найближчим часом.\n\n" +
     "🌐 Або перегляньте каталог: https://magicair.com.ua"
@@ -2949,6 +2984,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
