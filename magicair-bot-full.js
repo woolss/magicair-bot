@@ -136,6 +136,43 @@ const holidays = [
   { date: '31.10', name: 'Хелловін', emoji: '🎃' }
 ];
 
+// ========== ANTISPAM ==========
+const userRateLimit = new Map();
+const MAX_MESSAGES_PER_MINUTE = 30;
+const BLOCK_DURATION = 5 * 60 * 1000; // 5 хвилин
+
+function checkRateLimit(chatId) {
+  const now = Date.now();
+  let userLimit = userRateLimit.get(chatId);
+
+  if (!userLimit) {
+    userLimit = { count: 0, resetTime: now + 60 * 1000, blockedUntil: 0 };
+    userRateLimit.set(chatId, userLimit);
+  }
+
+  // якщо користувач заблокований
+  if (now < userLimit.blockedUntil) {
+    const remainingMs = userLimit.blockedUntil - now;
+    const remainingMinutes = Math.ceil(remainingMs / 60000);
+    return { allowed: false, waitMinutes: remainingMinutes };
+  }
+
+  // якщо хвилинне вікно минуло → обнуляємо
+  if (now > userLimit.resetTime) {
+    userLimit.count = 0;
+    userLimit.resetTime = now + 60 * 1000;
+  }
+
+  userLimit.count++;
+
+  if (userLimit.count > MAX_MESSAGES_PER_MINUTE) {
+    userLimit.blockedUntil = now + BLOCK_DURATION;
+    return { allowed: false, waitMinutes: 5 };
+  }
+
+  return { allowed: true };
+}
+
 const isManager = id => MANAGERS.includes(id);
 const getManagerName = id => MANAGERS_DATA[id] || `Менеджер (${id})`;
 
@@ -575,11 +612,21 @@ bot.on('message', async (msg) => {
     if (isManager(chatId)) {
       await handleManagerMessage(msg);
     } else {
+      // ✅ Антиспам: 30 повідомлень / хв → блок на 5 хв
+      const rateStatus = checkRateLimit(chatId);
+      if (!rateStatus.allowed) {
+        await bot.sendMessage(
+          chatId,
+          `🚫 Ви надто часто надсилаєте повідомлення. Спробуйте знову через ${rateStatus.retryAfter} хвилин.`
+        );
+        return;
+      }
+
       await handleClientMessage(msg);
     }
   } catch (error) {
-      console.error('⚠ Message error:', error);
-      await bot.sendMessage(chatId, '⚠ Помилка. Спробуйте /start').catch(() => {});
+    console.error('⚠ Message error:', error);
+    await bot.sendMessage(chatId, '⚠ Помилка. Спробуйте /start').catch(() => {});
   }
 });
 
@@ -2787,6 +2834,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
