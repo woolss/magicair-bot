@@ -167,7 +167,8 @@ function checkRateLimit(chatId) {
 
   if (userLimit.count > MAX_MESSAGES_PER_MINUTE) {
     userLimit.blockedUntil = now + BLOCK_DURATION;
-    const remainingMinutes = Math.ceil(BLOCK_DURATION / 60000);
+    const remainingMs = userLimit.blockedUntil - now;
+    const remainingMinutes = Math.ceil(remainingMs / 60000);
     return { allowed: false, waitMinutes: remainingMinutes };
   }
 
@@ -600,6 +601,17 @@ bot.on('message', async (msg) => {
   const text = msg.text || '';
   const userName = msg.from.first_name || 'Клієнт';
 
+  // 🚫 Антиспам-перевірка
+  const rateStatus = checkRateLimit(chatId);
+  if (!rateStatus.allowed) {
+    await bot.sendMessage(
+      chatId,
+      `🚫 Ви надто часто надсилаєте повідомлення. Спробуйте знову через ${rateStatus.waitMinutes} хвилин.`
+    ).catch(() => {});
+    return;
+  }
+
+  // Обробка команд
   if (text && text.startsWith('/')) {
     if (text === '/end') {
       await handleEndCommand(chatId);
@@ -613,16 +625,6 @@ bot.on('message', async (msg) => {
     if (isManager(chatId)) {
       await handleManagerMessage(msg);
     } else {
-      // ✅ Антиспам: 30 повідомлень / хв → блок на 5 хв
-      const rateStatus = checkRateLimit(chatId);
-      if (!rateStatus.allowed) {
-        await bot.sendMessage(
-          chatId,
-          `🚫 Ви надто часто надсилаєте повідомлення. Спробуйте знову через ${rateStatus.retryAfter} хвилин.`
-        );
-        return;
-      }
-
       await handleClientMessage(msg);
     }
   } catch (error) {
@@ -2835,6 +2837,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
