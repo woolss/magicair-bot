@@ -631,12 +631,20 @@ bot.on('message', async (msg) => {
     if (isManager(chatId)) {
       await handleManagerMessage(msg);
     } else {
-      // Якщо очікується уточнення після фото
-      if (userProfiles[chatId]?.pendingPhotoOrder) {
-        await handlePhotoClarification(chatId, text, userName);
-      } else {
-        await handleClientMessage(msg);
+      // Якщо менеджер ще не підключився
+      if (userStates[chatId]?.step !== 'manager_chat') {
+        const lastOrderTime = userProfiles[chatId]?.lastOrderTime;
+        if (userProfiles[chatId]?.pendingPhotoOrder) {
+          await handlePhotoClarification(chatId, text, userName);
+          return;
+        } else if (lastOrderTime && Date.now() - lastOrderTime < 60 * 1000) {
+          // ⏳ якщо пройшло < 1 хвилини — трактуємо як уточнення
+          await handleOrderClarification(chatId, text, userName);
+          return;
+        }
       }
+      // все інше → як звичайне повідомлення
+      await handleClientMessage(msg);
     }
   } catch (error) {
     console.error('⚠ Message error:', error);
@@ -670,6 +678,9 @@ async function handlePhotoMessage(msg) {
 
   // Фото з підписом → одразу менеджеру
   await forwardPhotoOrderToManagers(chatId, userName, fileId, caption);
+
+  // ⏱ фіксуємо час відправки
+  userProfiles[chatId].lastOrderTime = Date.now();
 }
 
 // ===================== ОБРОБКА УТОЧНЕННЯ ДО ФОТО =====================
@@ -705,6 +716,7 @@ async function handlePhotoClarification(chatId, text, userName) {
 
   // ✅ після відправки чистимо
   delete userProfiles[chatId].pendingPhotoOrder;
+  userProfiles[chatId].lastOrderTime = Date.now();
 }
 
 // ===================== ВІДПРАВКА ФОТО МЕНЕДЖЕРАМ =====================
@@ -2937,6 +2949,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
