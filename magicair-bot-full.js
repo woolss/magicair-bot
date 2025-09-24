@@ -568,7 +568,7 @@ bot.on('polling_error', (error) => {
 // ========== START ==========
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
-  const firstName = msg.from.first_name || 'друже';
+  const userName = msg.from.first_name || 'друже';
   console.log(`▶️ START: ${chatId}, Managers: ${MANAGERS.join(',')}`);
 
   try {
@@ -2985,6 +2985,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
