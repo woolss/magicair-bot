@@ -669,29 +669,7 @@ async function handlePhotoMessage(msg) {
   }
 
   // Фото з підписом → одразу менеджеру
-  await bot.sendMessage(chatId,
-    "✅ Дякуємо! Я передаю ваше фото та коментар менеджеру для підтвердження.\n\n" +
-    "🌐 Ви також можете оформити замовлення самостійно: https://magicair.com.ua"
-  );
-
-  waitingClients.add(chatId);
-  const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
-  const notifyList = freeManagers.length ? freeManagers : MANAGERS;
-
-  for (const managerId of notifyList) {
-    try {
-      await bot.sendPhoto(managerId, fileId, {
-        caption: `🆕 Фото-замовлення від ${userName} (ID: ${chatId}):\n\n${caption}`,
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
-          ]
-        }
-      });
-    } catch (err) {
-      console.error('Failed to notify manager with photo', managerId, err?.message || err);
-    }
-  }
+  await forwardPhotoOrderToManagers(chatId, userName, fileId, caption);
 }
 
 // ===================== ОБРОБКА УТОЧНЕННЯ ДО ФОТО =====================
@@ -700,7 +678,6 @@ async function handlePhotoClarification(chatId, text, userName) {
   if (!pending) return;
 
   const fileId = pending.fileId;
-  delete userProfiles[chatId].pendingPhotoOrder;
 
   await bot.sendMessage(chatId,
     "✅ Дякуємо! Я передаю ваше фото та уточнення менеджеру.\n\n" +
@@ -725,6 +702,9 @@ async function handlePhotoClarification(chatId, text, userName) {
       console.error('Failed to notify manager with photo clarification', managerId, err?.message || err);
     }
   }
+
+  // ✅ після відправки чистимо
+  delete userProfiles[chatId].pendingPhotoOrder;
 }
 
 // ===================== ВІДПРАВКА ФОТО МЕНЕДЖЕРАМ =====================
@@ -753,7 +733,8 @@ async function forwardPhotoOrderToManagers(chatId, userName, fileId, caption) {
     }
   }
 
-  delete userProfiles[chatId].lastPhotoOrder;
+  // ✅ чистимо, щоб не висіло
+  delete userProfiles[chatId].pendingPhotoOrder;
 }
 
 // ===================== ОБРОБКА ПРЯМОГО ЗАМОВЛЕННЯ =====================
@@ -2966,6 +2947,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
