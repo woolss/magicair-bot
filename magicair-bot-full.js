@@ -3053,7 +3053,7 @@ async function executeBroadcast(managerId, message) {
   let failed = 0;
   let consecutiveErrors = 0;
 
-  const fullMessage = `${message}\n\n—\nMagicAir | magicair.com.ua`;
+  const fullMessage = `${message}\n\n—\n🎈MagicAir | magicair.com.ua\nВаш магазин гелієвих куль в Києві`;
 
   for (let i = 0; i < clientsToNotify.length; i++) {
     const { chatId, name } = clientsToNotify[i];
@@ -3221,6 +3221,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
