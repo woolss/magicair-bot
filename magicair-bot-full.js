@@ -1820,23 +1820,86 @@ async function showPromotionsList(managerId) {
 }
 
 async function notifyClientsAboutPromotion(promo) {
-  let notifiedCount = 0;
+  const clientsToNotify = [];
   for (const [chatId, profile] of Object.entries(userProfiles)) {
     if (profile.notifications && profile.name) {
-      try {
-        await bot.sendMessage(chatId,
-          `🎁 *Нова акція в MagicAir!*\n\n${promo.title}\n\n${promo.description}\n\n⏰ Діє до: ${promo.endDate}\n\n🛒 Встигніть скористатися!`,
-          { parse_mode: 'Markdown' }
-        );
-        notifiedCount++;
-      } catch (error) {
-        console.log(`Failed to notify ${chatId}:`, error.message);
-      }
+      clientsToNotify.push(chatId);
     }
   }
-  console.log(`✅ Notified ${notifiedCount} clients about new promotion`);
+  
+  if (clientsToNotify.length === 0) {
+    console.log('📭 Нет клиентов для уведомления об акции');
+    return;
+  }
+  
+  // Настройки скорости в зависимости от количества клиентов
+  let messagesPerSecond;
+  if (clientsToNotify.length <= 50) {
+    messagesPerSecond = 5; // Быстро для малого количества
+  } else if (clientsToNotify.length <= 200) {
+    messagesPerSecond = 3; // Средняя скорость
+  } else {
+    messagesPerSecond = 2; // Медленно для большого количества
+  }
+  
+  const delayMs = 1000 / messagesPerSecond;
+  const estimatedTime = Math.ceil(clientsToNotify.length / messagesPerSecond);
+  
+  console.log(`📢 Рассылка акции для ${clientsToNotify.length} клиентов`);
+  console.log(`⚡ Скорость: ${messagesPerSecond} сообщ/сек, время: ~${estimatedTime} сек`);
+  
+  let sent = 0;
+  let failed = 0;
+  let consecutiveErrors = 0;
+  
+  for (let i = 0; i < clientsToNotify.length; i++) {
+    const chatId = clientsToNotify[i];
+    
+    try {
+      await bot.sendMessage(chatId,
+        `🎁 Нова акція в MagicAir!\n\n${promo.title}\n\n${promo.description}\n\n⏰ Діє до: ${promo.endDate}\n\n🛒 Встигніть скористатися!`,
+        { parse_mode: 'Markdown' }
+      );
+      
+      sent++;
+      consecutiveErrors = 0; // Сбрасываем счетчик ошибок
+      
+      // Прогресс каждые 20%
+      const progress = Math.floor((i + 1) / clientsToNotify.length * 100);
+      if (progress % 20 === 0 && (i + 1) !== clientsToNotify.length) {
+        console.log(`📊 Прогресс: ${progress}% (${sent} отправлено, ${failed} ошибок)`);
+      }
+      
+    } catch (error) {
+      failed++;
+      consecutiveErrors++;
+      
+      if (error.message.includes('429')) {
+        console.log(`⚠️ Rate limit! Пауза на 3 секунды...`);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        consecutiveErrors = 0;
+      } else if (error.message.includes('403')) {
+        console.log(`🚫 Клиент ${chatId} заблокировал бота`);
+      } else {
+        console.log(`❌ Ошибка отправки ${chatId}: ${error.message}`);
+      }
+      
+      // Если много ошибок подряд - увеличиваем задержку
+      if (consecutiveErrors >= 5) {
+        console.log(`🐌 Слишком много ошибок, замедляем рассылку...`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        consecutiveErrors = 0;
+      }
+    }
+    
+    // Задержка между сообщениями
+    if (i < clientsToNotify.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+  
+  console.log(`🎯 Рассылка завершена! ✅ Успешно: ${sent} | ❌ Ошибок: ${failed}`);
 }
-
 // ========== HELPER FUNCTIONS ==========
 async function sendContacts(chatId) {
   const contactText = `📞 Контакти MagicAir:
@@ -2985,6 +3048,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
