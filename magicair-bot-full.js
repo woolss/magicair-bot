@@ -6,7 +6,7 @@ const { OpenAI } = require('openai');
 const fs = require('fs');
 const { Pool } = require('pg');
 const express = require('express');
-const fetch = require('node-fetch');
+const fetch = globalThis.fetch;
 
 const app = express();
 app.use(express.json());
@@ -3317,6 +3317,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
