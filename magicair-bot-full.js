@@ -1,4 +1,3 @@
-// magicair-bot-full.js
 process.env["NTBA_FIX_319"] = 1;
 process.env["NTBA_FIX_350"] = 1;
 
@@ -6,6 +5,36 @@ const TelegramBot = require('node-telegram-bot-api');
 const { OpenAI } = require('openai');
 const fs = require('fs');
 const { Pool } = require('pg');
+const express = require('express');
+const fetch = require('node-fetch');
+
+const app = express();
+app.use(express.json());
+
+// 🔽 новый endpoint для сообщений от веб-клиента
+app.post('/message-from-web', async (req, res) => {
+  try {
+    const { clientId, message } = req.body;
+
+    if (!clientId || !message) {
+      return res.status(400).json({ error: 'clientId и message обязательны' });
+    }
+
+    console.log(`🌐 Вхідне з сайту: ${clientId} → ${message}`);
+
+    // если клиент уже подключён к менеджеру → пересылаем менеджеру
+    const managerId = userStates[clientId]?.managerId;
+    if (managerId && activeManagerChats[managerId] === clientId) {
+      await bot.sendMessage(managerId, `👤 Веб-клієнт (${clientId}): ${message}`);
+      await logMessage(clientId, managerId, message, 'client');
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('❌ /message-from-web error:', err.message || err);
+    res.status(500).json({ error: 'internal error' });
+  }
+});
 
 // Инициализация подключения к БД
 const pool = process.env.DATABASE_URL ? new Pool({
@@ -1016,11 +1045,20 @@ async function handleManagerMessage(msg) {
   }
 
   if (activeManagerChats[managerId] && !managerCommands.includes(text)) {
-    const clientId = activeManagerChats[managerId];
-    await bot.sendMessage(clientId, `👨‍💼 ${getManagerName(managerId)}: ${text}`);
-    await logMessage(managerId, clientId, text, 'manager');
-    return;
+  const clientId = activeManagerChats[managerId];
+  const messageText = `👨‍💼 ${getManagerName(managerId)}: ${text}`;
+
+  if (String(clientId).startsWith('site-')) {
+    // Веб-клиент → отправляем через мост
+    await sendToWebClient(clientId, messageText);
+  } else {
+    // Телеграм-клиент → обычная отправка
+    await bot.sendMessage(clientId, messageText);
   }
+
+  await logMessage(managerId, clientId, text, 'manager');
+  return;
+}
 
   switch (text) {
     case '📋 Клієнти':
@@ -1500,30 +1538,41 @@ async function startManagerChatWithClient(managerId, clientId) {
   await bot.sendMessage(managerId, `✅ Ви підключені до клієнта (${clientId}).`);
   
   // Уведомляем клиента о подключении менеджера
-  try {
+try {
+  if (String(clientId).startsWith('site-')) {
+    // Если клиент с сайта → отправляем через мост
+    await sendToWebClient(clientId, 
+      `👨‍💼 Менеджер ${managerName} підключився до чату!\n` +
+      `Він готовий відповісти на ваші запитання.`
+    );
+
+    const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
+    await sendToWebClient(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
+    await logMessage(managerId, clientId, welcomeMessage, 'manager');
+  } else {
+    // Если клиент Telegram → обычная отправка
     await bot.sendMessage(clientId, 
       `👨‍💼 Менеджер ${managerName} підключився до чату!\n` +
       `Він готовий відповісти на ваші запитання.`, 
       clientInChatMenu
     );
 
-    // Менеджер отправляет приветственное сообщение
     const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
     await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
     await logMessage(managerId, clientId, welcomeMessage, 'manager');
-    
-  } catch (error) {
-    // Если не удалось отправить сообщение клиенту (например, заблокировал бота)
-    console.error(`Failed to notify client ${clientId}:`, error.message);
-    await bot.sendMessage(managerId, 
-      `⚠️ Не вдалося надіслати повідомлення клієнту ${clientId}.\n` +
-      `Можливо, клієнт заблокував бота або видалив чат.`
-    );
-    
-    // Очищаем соединение
-    delete activeManagerChats[managerId];
-    delete userStates[clientId];
   }
+  
+} catch (error) {
+  console.error(`Failed to notify client ${clientId}:`, error.message);
+  await bot.sendMessage(managerId, 
+    `⚠️ Не вдалося надіслати повідомлення клієнту ${clientId}.\n` +
+    `Можливо, клієнт заблокував бота або видалив чат.`
+  );
+
+  delete activeManagerChats[managerId];
+  delete userStates[clientId];
+}
+
 }
 
 // --- ИСПРАВЛЕННАЯ функция для отправки информации о товарах (открывается в Telegram) ---
@@ -1994,6 +2043,31 @@ async function handleSearch(chatId, query) {
     }
   );
 }
+
+// 🔽 добавили новую функцию
+async function sendToWebClient(clientId, message) {
+  if (!process.env.BRIDGE_URL) {
+    console.error('BRIDGE_URL not set — cannot send to web client');
+    return;
+  }
+
+  try {
+    const res = await fetch(`${process.env.BRIDGE_URL.replace(/\/$/, '')}/message-to-web`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId, message }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      console.error(`❌ sendToWebClient failed: ${res.status} ${text}`);
+    } else {
+      console.log(`➡️ sendToWebClient OK for ${clientId}`);
+    }
+  } catch (err) {
+    console.error('❌ sendToWebClient error:', err.message || err);
+  }
+}
 // ========== ИСПРАВЛЕННЫЕ ФУНКЦИИ МЕНЕДЖЕРА ==========
 async function forwardToManager(clientId, text, userName) {
   const managerId = userStates[clientId]?.managerId;
@@ -2010,7 +2084,13 @@ async function forwardToManager(clientId, text, userName) {
 async function forwardToClient(clientId, text) {
   const managerId = userStates[clientId]?.managerId;
   const managerName = getManagerName(managerId);
-  await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${text}`);
+  const messageText = `👨‍💼 ${managerName}: ${text}`;
+
+  if (String(clientId).startsWith('site-')) {
+    await sendToWebClient(clientId, messageText);
+  } else {
+    await bot.sendMessage(clientId, messageText);
+  }
 }
 
 async function handleEndCommand(chatId) {
@@ -2021,8 +2101,15 @@ async function handleEndCommand(chatId) {
       delete activeManagerChats[managerId];
       await bot.sendMessage(managerId, `✅ Клієнт завершив чат.`, managerMenu);
     }
+
+    // если клиент с сайта → уведомляем через мост
+    if (String(chatId).startsWith('site-')) {
+      await sendToWebClient(chatId, '✅ Ви завершили чат.');
+    } else {
+      await bot.sendMessage(chatId, '✅ Чат завершено.', mainMenu);
+    }
+
     delete userStates[chatId];
-    await bot.sendMessage(chatId, '✅ Чат завершено.', mainMenu);
   } else if (isManager(chatId)) {
     await endManagerChat(chatId);
   }
@@ -2033,8 +2120,15 @@ async function endManagerChat(managerId) {
   if (clientId) {
     delete activeManagerChats[managerId];
     delete userStates[clientId];
-    await bot.sendMessage(clientId, '✅ Менеджер завершив чат.', mainMenu);
+
+    // если клиент с сайта
+    if (String(clientId).startsWith('site-')) {
+      await sendToWebClient(clientId, '✅ Менеджер завершив чат.');
+    } else {
+      await bot.sendMessage(clientId, '✅ Менеджер завершив чат.', mainMenu);
+    }
   }
+
   await bot.sendMessage(managerId, '✅ Чат завершено.', managerMenu);
 }
 
@@ -3199,6 +3293,8 @@ async function startBot() {
     process.exit(1);
   }
 }
+const API_PORT = process.env.BOT_API_PORT || process.env.PORT || 3000;
+app.listen(API_PORT, () => console.log(`🌐 Bot API listening on port ${API_PORT}`));
 
 // Запуск бота
 startBot().catch(error => {
@@ -3221,6 +3317,8 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
+
 
 
 
