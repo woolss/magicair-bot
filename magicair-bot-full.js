@@ -1081,10 +1081,10 @@ if (userStates[managerId]?.step === 'search_history' && text !== '🔍 Пошу�
   return;
 }
 
-if (userStates[managerId]?.step === 'broadcast_message') {
+if (userStates[managerId]?.step === 'broadcast_message' && text !== '📢 Масова розсилка') {
   await handleBroadcastInput(managerId, text);
   return;
- }
+}
 }
 // ========== CALLBACK QUERIES ==========
 bot.on('callback_query', async (query) => {
@@ -3221,6 +3221,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
