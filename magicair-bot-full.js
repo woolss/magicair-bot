@@ -195,7 +195,8 @@ const managerMenu = {
     keyboard: [
       ['📋 Клієнти', '🎁 Активні акції'],
       ['📄 Журнал', '🔍 Пошук історії'],
-      ['📊 Статистика', '🛑 Завершити чат']
+      ['📊 Статистика', '📢 Масова розсилка'],
+      ['🛑 Завершити чат']
     ],
     resize_keyboard: true
   }
@@ -1058,24 +1059,33 @@ async function handleManagerMessage(msg) {
       await showStats(managerId);
       break;
 
+    case '📢 Масова розсилка':
+      delete userStates[managerId];
+      await startCustomBroadcast(managerId);
+      break;
+
     case '🎁 Створити акцію':
       delete userStates[managerId];
       await startPromotionCreation(managerId);
       break;
 
-    default:
-      if (!activeManagerChats[managerId]) {
-        await bot.sendMessage(managerId, '👨‍💼 Будь ласка, оберіть дію з меню.');
-      }
-      break;
+  default:
+  if (!activeManagerChats[managerId]) {
+    await bot.sendMessage(managerId, '👨‍💼 Будь ласка, оберіть дію з меню.');
   }
-
-  if (userStates[managerId]?.step === 'search_history' && text !== '🔍 Пошук історії') {
-    await searchClientHistory(managerId, text.trim());
-    return;
-  }
+  break;
 }
 
+if (userStates[managerId]?.step === 'search_history' && text !== '🔍 Пошук історії') {
+  await searchClientHistory(managerId, text.trim());
+  return;
+}
+
+if (userStates[managerId]?.step === 'broadcast_message') {
+  await handleBroadcastInput(managerId, text);
+  return;
+ }
+}
 // ========== CALLBACK QUERIES ==========
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
@@ -1335,6 +1345,28 @@ bot.on('callback_query', async (query) => {
         break;
       case 'connect_event':
         await connectClientToManager(chatId, messageId, query.from.first_name || 'Клієнт', 'Оформлення свята');
+        break;
+      case 'broadcast_confirm':
+        if (userStates[chatId]?.step === 'broadcast_confirm' && userStates[chatId]?.message) {
+          const message = userStates[chatId].message;
+          delete userStates[chatId];
+          await bot.editMessageText(
+            '⏳ Розсилка розпочата...',
+            { chat_id: chatId, message_id: messageId }
+          );
+          await executeBroadcast(chatId, message);
+        }
+        break;
+
+      case 'broadcast_cancel':
+        delete userStates[chatId];
+        await bot.editMessageText(
+          '❌ Розсилка скасована.',
+          { chat_id: chatId, message_id: messageId }
+        );
+        setTimeout(() => {
+          bot.sendMessage(chatId, 'Головне меню:', managerMenu);
+        }, 1000);
         break;
 
 
@@ -2932,6 +2964,146 @@ let birthdayCheckInterval = null;
 function startDailyChecks() {
   // Логика перенесена в startBot()
 }
+
+// ========== CUSTOM BROADCAST FUNCTIONS ==========
+async function startCustomBroadcast(managerId) {
+  const activeClients = Object.values(userProfiles).filter(p => p.notifications && p.name);
+  
+  userStates[managerId] = { step: 'broadcast_message' };
+  
+  await bot.sendMessage(managerId,
+    `📢 Масова розсилка повідомлень\n\n` +
+    `👥 Активних клієнтів: ${activeClients.length}\n\n` +
+    `Введіть текст повідомлення для розсилки:\n\n` +
+    `⚠️ Повідомлення буде відправлено ВСІМ активним клієнтам!\n` +
+    `Для скасування напишіть "скасувати"`
+  );
+}
+
+async function handleBroadcastInput(managerId, text) {
+  if (text.toLowerCase().includes('скасувати') || text.toLowerCase().includes('отмена')) {
+    delete userStates[managerId];
+    await bot.sendMessage(managerId, '❌ Розсилка скасована.', managerMenu);
+    return;
+  }
+
+  const sanitizedText = sanitizeMessage(text);
+  if (!sanitizedText || sanitizedText.length < 5) {
+    await bot.sendMessage(managerId, 
+      '❌ Повідомлення занадто коротке. Мінімум 5 символів.\nСпробуйте ще раз або напишіть "скасувати":'
+    );
+    return;
+  }
+
+  userStates[managerId] = { 
+    step: 'broadcast_confirm',
+    message: sanitizedText 
+  };
+
+  const activeClients = Object.values(userProfiles).filter(p => p.notifications && p.name);
+  const estimatedTime = Math.ceil(activeClients.length / 3);
+
+  await bot.sendMessage(managerId,
+    `📋 Підтвердження розсилки:\n\n` +
+    `📝 Текст: "${sanitizedText.substring(0, 100)}${sanitizedText.length > 100 ? '...' : ''}"\n\n` +
+    `👥 Отримувачів: ${activeClients.length}\n` +
+    `⏱️ Час відправки: ~${estimatedTime} секунд\n\n` +
+    `❓ Підтверджуєте відправку?`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Підтвердити', callback_data: 'broadcast_confirm' },
+            { text: '❌ Скасувати', callback_data: 'broadcast_cancel' }
+          ]
+        ]
+      }
+    }
+  );
+}
+
+async function executeBroadcast(managerId, message) {
+  const clientsToNotify = [];
+  for (const [chatId, profile] of Object.entries(userProfiles)) {
+    if (profile.notifications && profile.name) {
+      clientsToNotify.push({ chatId, name: profile.name });
+    }
+  }
+
+  if (clientsToNotify.length === 0) {
+    await bot.sendMessage(managerId, '📭 Немає активних клієнтів для розсилки.', managerMenu);
+    return;
+  }
+
+  await bot.sendMessage(managerId, 
+    `🚀 Розпочинаю розсилку для ${clientsToNotify.length} клієнтів...`
+  );
+
+  let messagesPerSecond;
+  if (clientsToNotify.length <= 50) {
+    messagesPerSecond = 5;
+  } else if (clientsToNotify.length <= 200) {
+    messagesPerSecond = 3;
+  } else {
+    messagesPerSecond = 2;
+  }
+
+  const delayMs = 1000 / messagesPerSecond;
+  let sent = 0;
+  let failed = 0;
+  let consecutiveErrors = 0;
+
+  const fullMessage = `${message}\n\n—\nMagicAir | magicair.com.ua`;
+
+  for (let i = 0; i < clientsToNotify.length; i++) {
+    const { chatId, name } = clientsToNotify[i];
+
+    try {
+      await bot.sendMessage(chatId, fullMessage);
+      sent++;
+      consecutiveErrors = 0;
+
+      const progress = Math.floor((i + 1) / clientsToNotify.length * 100);
+      if (progress % 25 === 0 && (i + 1) !== clientsToNotify.length) {
+        await bot.sendMessage(managerId, 
+          `📊 Прогрес: ${progress}% (${sent} відправлено, ${failed} помилок)`
+        );
+      }
+
+    } catch (error) {
+      failed++;
+      consecutiveErrors++;
+
+      if (error.message.includes('429')) {
+        console.log(`⚠️ Rate limit! Пауза...`);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        consecutiveErrors = 0;
+      } else if (error.message.includes('403')) {
+        console.log(`🚫 Клієнт ${chatId} заблокував бота`);
+      }
+
+      if (consecutiveErrors >= 5) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        consecutiveErrors = 0;
+      }
+    }
+
+    if (i < clientsToNotify.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+
+  await logMessage(managerId, 'broadcast', `Custom broadcast: ${message.substring(0, 100)}`, 'broadcast');
+
+  await bot.sendMessage(managerId,
+    `🎯 Розсилка завершена!\n\n` +
+    `✅ Успішно відправлено: ${sent}\n` +
+    `❌ Помилок: ${failed}\n` +
+    `📊 Загальна ефективність: ${Math.round(sent / clientsToNotify.length * 100)}%`,
+    managerMenu
+  );
+}
+
 async function syncAllProfilesToDB() {
   if (!pool) return;
   
@@ -2949,6 +3121,7 @@ async function syncAllProfilesToDB() {
   
   console.log(`✅ Синхронізовано профілів: ${synced}/${Object.keys(userProfiles).length}`);
 }
+
 async function startBot() {
   try {
     // Инициализация БД
@@ -3048,6 +3221,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
