@@ -230,6 +230,18 @@ const managerMenu = {
     resize_keyboard: true
   }
 };
+
+// ========== НОВОЕ МЕНЮ ДЛЯ ЗАКАЗОВ ==========
+const orderCollectionMenu = {
+  reply_markup: {
+    keyboard: [
+      ['✅ Відправити замовлення менеджеру'],
+      ['🏠 Головне меню']
+    ],
+    resize_keyboard: true
+  }
+};
+
 const clientInChatMenu = {
   reply_markup: {
     keyboard: [
@@ -539,7 +551,7 @@ function isOrderContext(chatId) {
   const profile = userProfiles[chatId];
   if (!profile) return false;
 
-  const recentOrderTime = 10 * 60 * 1000; // 10 минут
+  const recentOrderTime = 5 * 60 * 1000; // 5 минут
   return profile.lastOrderTime && (Date.now() - profile.lastOrderTime) < recentOrderTime;
 }
 
@@ -683,7 +695,7 @@ bot.on('message', async (msg) => {
   }
 });
 
-// ===================== ОБРОБКА ФОТО =====================
+// ==================== ОБРОБКА ФОТО ====================
 async function handlePhotoMessage(msg) {
   const chatId = msg.chat.id;
   const userName = msg.from.first_name || 'Клієнт';
@@ -697,105 +709,192 @@ async function handlePhotoMessage(msg) {
   }
 
   if (!caption) {
-    // Фото без опису → чекаємо уточнення
+    // Фото без описа → чекаємо уточнення
     userProfiles[chatId].pendingPhotoOrder = { fileId };
+    initOrderTracking(chatId);
     await bot.sendMessage(chatId,
       "📷 Ви надіслали фото кульок. Щоб оформити замовлення, уточніть, будь ласка:\n\n" +
       "📅 На коли потрібна доставка?\n" +
-      "📍 Доставка чи самовивіз?"
+      "📍 Доставка чи самовивіз?\n\n" +
+      "💡 Ви можете додати деталі зараз або натиснути кнопку відправки.\n" +
+      "⏰ У вас є 5 хвилин для уточнень.",
+      orderCollectionMenu
     );
+    
+    setAutoFinalize(chatId, userName);
     return;
   }
 
-  // Фото з підписом → одразу менеджеру
-  await forwardPhotoOrderToManagers(chatId, userName, fileId, caption);
-
-  // ⏱ фіксуємо час відправки
-  userProfiles[chatId].lastOrderTime = Date.now();
+  // Фото з підписом → одразу готове до відправки
+  initOrderTracking(chatId);
+  userProfiles[chatId].orderStatus = 'ready';
   userProfiles[chatId].lastPhotoOrder = { fileId, caption };
+  
+  await bot.sendMessage(chatId,
+    "✅ Ваше фото-замовлення готове до відправки!\n\n" +
+    "🎯 Натисніть '✅ Відправити замовлення менеджеру' щоб відправити зараз\n" +
+    "📝 Або додайте ще деталі протягом 5 хвилин\n" +
+    "⏰ Замовлення автоматично відправиться менеджеру через 5 хвилин",
+    orderCollectionMenu
+  );
+  
+  setAutoFinalize(chatId, userName);
 }
 
-// ===================== ОБРОБКА УТОЧНЕННЯ ДО ФОТО =====================
+// ==================== ОБРОБКА УТОЧНЕННЯ ДО ФОТО ====================
 async function handlePhotoClarification(chatId, text, userName) {
   const pending = userProfiles[chatId]?.pendingPhotoOrder;
   if (!pending) return;
 
   const fileId = pending.fileId;
-
-  await bot.sendMessage(chatId,
-    "✅ Дякуємо! Я передаю ваше фото та уточнення менеджеру.\n\n" +
-    "🌐 Ви також можете оформити замовлення самостійно: https://magicair.com.ua"
-  );
-
-  waitingClients.add(chatId);
-  const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
-  const notifyList = freeManagers.length ? freeManagers : MANAGERS;
-
-  for (const managerId of notifyList) {
-    try {
-      await bot.sendPhoto(managerId, fileId, {
-        caption: `🆕 Фото-замовлення з уточненням від ${userName} (ID: ${chatId}):\n\n${text}`,
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
-          ]
-        }
-      });
-    } catch (err) {
-      console.error('Failed to notify manager with photo clarification', managerId, err?.message || err);
-    }
+  
+  if (!userProfiles[chatId].orderStatus) {
+    initOrderTracking(chatId);
   }
-
-  // ✅ після відправки чистимо
-  delete userProfiles[chatId].pendingPhotoOrder;
-  userProfiles[chatId].lastOrderTime = Date.now();
+  
+  if (!userProfiles[chatId].clarifications) {
+    userProfiles[chatId].clarifications = [];
+  }
+  userProfiles[chatId].clarifications.push(text);
+  
   userProfiles[chatId].lastPhotoOrder = { fileId, caption: text };
-}
+  userProfiles[chatId].orderStatus = 'ready';
 
-// ===================== ВІДПРАВКА ФОТО МЕНЕДЖЕРАМ =====================
-async function forwardPhotoOrderToManagers(chatId, userName, fileId, caption) {
   await bot.sendMessage(chatId,
-    "✅ Дякуємо! Я передаю ваше фото та коментар менеджеру для підтвердження.\n\n" +
-    "🌐 Ви також можете оформити замовлення самостійно: https://magicair.com.ua"
+    "✅ Уточнення додано до фото-замовлення!\n\n" +
+    "🎯 Натисніть '✅ Відправити замовлення менеджеру' щоб відправити зараз\n" +
+    "📝 Або додайте ще деталі протягом 5 хвилин\n" +
+    "⏰ Замовлення автоматично відправиться менеджеру через 5 хвилин",
+    orderCollectionMenu
   );
 
+  delete userProfiles[chatId].pendingPhotoOrder;
+  
+  setAutoFinalize(chatId, userName);
+}
+
+// ==================== ЛОГИКА ОТСЛЕЖИВАНИЯ И ФИНАЛИЗАЦИИ ЗАКАЗОВ ====================
+
+function initOrderTracking(chatId) {
+  if (!userProfiles[chatId]) {
+    userProfiles[chatId] = { chatId, clarifications: [] };
+  }
+  
+  userProfiles[chatId].orderStatus = 'collecting'; // collecting -> ready -> sent
+  userProfiles[chatId].clarifications = [];
+  userProfiles[chatId].lastOrderTime = Date.now();
+}
+
+function setAutoFinalize(chatId, userName) {
+  const profile = userProfiles[chatId];
+  if (!profile) return;
+
+  // ВАЖНО: очищаем предыдущий таймер чтобы избежать дублей
+  if (profile.autoSendTimer) {
+    clearTimeout(profile.autoSendTimer);
+  }
+
+  profile.autoSendTimer = setTimeout(async () => {
+    if (profile && (profile.orderStatus === 'ready' || profile.orderStatus === 'collecting')) {
+      await finalizeAndSendOrder(chatId, userName);
+    }
+  }, 5 * 60 * 1000);
+}
+
+async function finalizeAndSendOrder(chatId, userName) {
+  const profile = userProfiles[chatId];
+  if (!profile || profile.orderStatus === 'sent') {
+    return; // заказ уже отправлен
+  }
+
+  profile.orderStatus = 'sent';
+  
+  // ВАЖНО: очищаем таймер при финализации
+  if (profile.autoSendTimer) {
+    clearTimeout(profile.autoSendTimer);
+    delete profile.autoSendTimer;
+  }
+  
+  // Собираем полный заказ
+  let fullOrder = profile.lastOrder || "Замовлення без основного тексту";
+  
+  if (profile.clarifications && profile.clarifications.length > 0) {
+    fullOrder += "\n\n➡️ Уточнення:\n" + profile.clarifications.join("\n");
+  }
+
+  // Проверяем, есть ли фото-заказ
+  const lastPhoto = profile.lastPhotoOrder;
+  const isPhotoOrder = lastPhoto && (Date.now() - profile.lastOrderTime) < 5 * 60 * 1000;
+
+  await bot.sendMessage(chatId,
+    "✅ Ваше замовлення відправлено менеджеру для підтвердження. Незабаром з вами зв'яжуться.\n\n" +
+    "🌐 Або ви можете оформити замовлення самостійно: https://magicair.com.ua",
+    mainMenu
+  );
+
+  // Добавляем клиента в очередь ожидания
   waitingClients.add(chatId);
   const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
   const notifyList = freeManagers.length ? freeManagers : MANAGERS;
 
-  for (const managerId of notifyList) {
-    try {
-      await bot.sendPhoto(managerId, fileId, {
-        caption: `🆕 Фото-замовлення від ${userName} (ID: ${chatId}):\n\n${caption}`,
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
-          ]
-        }
-      });
-    } catch (err) {
-      console.error('Failed to notify manager with photo', managerId, err?.message || err);
+  // Отправляем одно сообщение менеджерам
+  if (isPhotoOrder) {
+    for (const managerId of notifyList) {
+      try {
+        await bot.sendPhoto(managerId, lastPhoto.fileId, {
+          caption: `📷 Фото-замовлення від ${userName} (ID: ${chatId}):\n\n` +
+                   `📝 Початковий коментар: ${lastPhoto.caption || '(без коментаря)'}\n\n` +
+                   `➡️ Фінальне замовлення:\n${fullOrder}`,
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
+            ]
+          }
+        });
+      } catch (err) {
+        console.error('Failed to notify manager with final photo order', managerId, err?.message || err);
+      }
+    }
+  } else {
+    for (const managerId of notifyList) {
+      try {
+        await bot.sendMessage(
+          managerId,
+          `🆕 Фінальне замовлення від ${userName} (ID: ${chatId}):\n\n${fullOrder}`,
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
+              ]
+            }
+          }
+        );
+      } catch (err) {
+        console.error('Failed to notify manager with final order', managerId, err?.message || err);
+      }
     }
   }
 
-  // ✅ чистимо, щоб не висіло
-  delete userProfiles[chatId].pendingPhotoOrder;
-  userProfiles[chatId].lastPhotoOrder = { fileId, caption };
+  // Очищаем статус заказа
+  profile.clarifications = [];
+  delete profile.orderStatus;
 }
 
-// ===================== ОБРОБКА ПРЯМОГО ЗАМОВЛЕННЯ =====================
+// ===================== ОБРОБКА ПРЯМОГО ЗАМОВЛЕННЯ (ОНОВЛЕНО) =====================
 async function handleDirectOrder(chatId, text, userName) {
   console.log(`📦 Direct order detected from ${chatId}, text: ${text}`);
 
   if (!userProfiles[chatId]) {
     userProfiles[chatId] = { chatId, clarifications: [] };
   }
+
+  // НОВОЕ: инициализируем отслеживание заказа
+  initOrderTracking(chatId);
   userProfiles[chatId].lastOrder = text;
   userProfiles[chatId].lastMessage = text;
   userProfiles[chatId].lastActivity = Date.now();
-  userProfiles[chatId].lastOrderTime = Date.now();
-  userProfiles[chatId].clarifications = [];
 
+  // Проверка деталей заказа
   const hasQuantity = /\d+/.test(text) || /штук|шт\b/i.test(text);
   const hasSpecificType = /(латексні|фольговані|цифри|фігури|ходячі|серця|зірки|однотонні|з малюнком|з конфеті|агат|браш|з бантиками)/i.test(text);
   const hasDate = /(сьогодні|завтра|післязавтра|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})/i.test(text);
@@ -810,141 +909,72 @@ async function handleDirectOrder(chatId, text, userName) {
     if (!hasSpecificType) clarificationMessage += "🎈 Які саме кульки: латексні, фольговані, цифри?\n";
     if (!hasDate) clarificationMessage += "📅 На коли потрібна доставка?\n";
     if (!hasStore) clarificationMessage += "📍 Доставка чи самовивіз (з якого магазину)?\n";
-    clarificationMessage += "\nНапишіть всю інформацію в одному повідомленні, наприклад:\n";
-    clarificationMessage += "\"10 латексних кульок на завтра, доставка\"";
 
-    await bot.sendMessage(chatId, clarificationMessage);
+    clarificationMessage += "\n💡 Ви можете додати деталі зараз або натиснути кнопку '✅ Відправити замовлення менеджеру' щоб відправити те що є.\n";
+    clarificationMessage += "⏰ У вас є 5 хвилин для уточнень, після чого замовлення автоматично відправиться менеджеру.";
+
+    await bot.sendMessage(chatId, clarificationMessage, orderCollectionMenu);
+
+    // НОВОЕ: централизованный запуск таймера автоотправки
+    setAutoFinalize(chatId, userName);
+
     return;
   }
 
+  // Если заказ полный → сразу готов к отправке
+  userProfiles[chatId].orderStatus = 'ready';
+
   await bot.sendMessage(chatId,
-    "✅ Дякуємо! Я передаю ваше замовлення менеджеру для підтвердження. Незабаром з вами зв'яжуться.\n\n" +
-    "🌐 Або ви можете оформити замовлення самостійно: https://magicair.com.ua"
+    "✅ Ваше замовлення готове до відправки!\n\n" +
+    "🎯 Натисніть '✅ Відправити замовлення менеджеру' щоб відправити зараз\n" +
+    "📝 Або додайте ще деталі протягом 5 хвилин\n" +
+    "⏰ Замовлення автоматично відправиться менеджеру через 5 хвилин",
+    orderCollectionMenu
   );
 
-  waitingClients.add(chatId);
-  const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
-  const notifyList = freeManagers.length ? freeManagers : MANAGERS;
-
-  let fullOrder = text;
-  if (userProfiles[chatId].clarifications.length > 0) {
-    fullOrder += "\n\n➡️ Уточнення:\n" + userProfiles[chatId].clarifications.join("\n");
-  }
-
-  for (const managerId of notifyList) {
-    try {
-      await bot.sendMessage(
-        managerId,
-        `🆕 Отримано нове замовлення від ${userName} (ID: ${chatId}):\n\n${fullOrder}`,
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
-            ]
-          }
-        }
-      );
-    } catch (err) {
-      console.error('Failed to notify manager', managerId, err?.message || err);
-    }
-  }
-
-  userProfiles[chatId].clarifications = [];
+  // НОВОЕ: запускаем таймер
+  setAutoFinalize(chatId, userName);
 }
 
-// ===================== ОБРОБКА УТОЧНЕНЬ =====================
+// ==================== ОБРОБКА УТОЧНЕНЬ ====================
 async function handleOrderClarification(chatId, text, userName) {
   console.log(`✏️ Clarification detected from ${chatId}, text: ${text}`);
 
-  if (!userProfiles[chatId]) {
-    userProfiles[chatId] = { chatId, clarifications: [] };
-  }
-  userProfiles[chatId].clarifications.push(text);
-  userProfiles[chatId].lastMessage = text;
-  userProfiles[chatId].lastActivity = Date.now();
-
-  const lastPhoto = userProfiles[chatId].lastPhotoOrder;
-  const lastOrderTime = userProfiles[chatId].lastOrderTime;
-
-  // Якщо останнім було фото-замовлення і ще не пройшла 1 хвилина
-  if (lastPhoto && lastOrderTime && Date.now() - lastOrderTime < 60 * 1000) {
-    await bot.sendMessage(chatId,
-      "✅ Додаю ваше уточнення до фото-замовлення. Менеджер його побачить.\n\n" +
-      "🌐 Ви також можете оформити замовлення самостійно: https://magicair.com.ua"
-    );
-
-    waitingClients.add(chatId);
-    const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
-    const notifyList = freeManagers.length ? freeManagers : MANAGERS;
-
-    for (const managerId of notifyList) {
-      try {
-        await bot.sendPhoto(managerId, lastPhoto.fileId, {
-          caption: `📷 Уточнення до фото-замовлення від ${userName} (ID: ${chatId}):\n\n📝 Початковий коментар: ${lastPhoto.caption || '(без коментаря)'}\n\n➡️ Нове уточнення: ${text}`,
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
-            ]
-          }
-        });
-      } catch (err) {
-        console.error('Failed to notify manager with photo clarification', managerId, err?.message || err);
-      }
-    }
-
+  const profile = userProfiles[chatId];
+  if (!profile || profile.orderStatus === 'sent') {
+    // Якщо замовлення вже відправлено → трактуємо як звичайне повідомлення
+    await handleGeneralMessage(chatId, text, userName);
     return;
   }
 
-  // ===== Інакше працюємо як звичайне текстове уточнення =====
-  const hasQuantity = /\d+/.test(text) || /штук|шт\b/i.test(text);
-  const hasSpecificType = /(латексні|фольговані|цифри|фігури|ходячі|серця|зірки|однотонні|з малюнком|з конфеті|агат|браш|з бантиками)/i.test(text);
-  const hasDate = /(сьогодні|завтра|післязавтра|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})/i.test(text);
-  const hasStore = /(оболонь|теремки|самовивіз)/i.test(text);
-
-  const detailsCount = [hasQuantity, hasSpecificType, hasDate, hasStore].filter(Boolean).length;
-  const hasEnoughDetails = detailsCount >= 2;
-
-  if (!hasEnoughDetails) {
-    await bot.sendMessage(chatId,
-      "Дякую! Ще потрібно трохи уточнень, щоб оформити замовлення. Напишіть, будь ласка, у одному повідомленні:\n" +
-      "📦 кількість кульок\n🎈 тип (латексні/фольговані)\n📅 дата\n📍 доставка чи самовивіз"
+  // Перевірка, чи не минув час на уточнення
+  if (Date.now() - profile.lastOrderTime > 5 * 60 * 1000) {
+    await bot.sendMessage(chatId, 
+      "⏰ Час для уточнень минув. Ваше попереднє замовлення вже відправлено менеджеру.\n\n" +
+      "Якщо хочете зробити нове замовлення, будь ласка, опишіть його повністю.",
+      mainMenu
     );
     return;
   }
+
+  if (!profile.clarifications) {
+    profile.clarifications = [];
+  }
+  
+  // Додаємо уточнення
+  profile.clarifications.push(text);
+  profile.lastMessage = text;
+  profile.lastActivity = Date.now();
+
+  const totalClarifications = profile.clarifications.length;
 
   await bot.sendMessage(chatId,
-    "✅ Передаю ваше уточнення менеджеру. Він зв'яжеться з вами найближчим часом.\n\n" +
-    "🌐 Або перегляньте каталог: https://magicair.com.ua"
+    `✅ Уточнення №${totalClarifications} додано до замовлення!\n\n` +
+    "🎯 Натисніть '✅ Відправити замовлення менеджеру' щоб відправити зараз\n" +
+    "📝 Або додайте ще деталі\n" +
+    `⏰ Замовлення автоматично відправиться через ${Math.ceil((5 * 60 * 1000 - (Date.now() - profile.lastOrderTime)) / 60000)} хв.`,
+    orderCollectionMenu
   );
-
-  waitingClients.add(chatId);
-  const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
-  const notifyList = freeManagers.length ? freeManagers : MANAGERS;
-
-  let fullOrder = userProfiles[chatId].lastOrder || "(без основного замовлення)";
-  if (userProfiles[chatId].clarifications.length > 0) {
-    fullOrder += "\n\n➡️ Уточнення:\n" + userProfiles[chatId].clarifications.join("\n");
-  }
-
-  for (const managerId of notifyList) {
-    try {
-      await bot.sendMessage(
-        managerId,
-        `✏️ Отримано уточнення до замовлення від ${userName} (ID: ${chatId}):\n\n${fullOrder}`,
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
-            ]
-          }
-        }
-      );
-    } catch (err) {
-      console.error('Failed to notify manager', managerId, err?.message || err);
-    }
-  }
-
-  userProfiles[chatId].clarifications = [];
 }
 
 // ===================== CLIENT HANDLER =====================
@@ -986,51 +1016,76 @@ async function handleClientMessage(msg) {
   if (isOrderClarif) return await handleOrderClarification(chatId, text, userName);
 
   switch (text) {
-    case '🛒 Каталог':
-      await bot.sendMessage(chatId, '🛒 Каталог товарів MagicAir:\n\nОберіть категорію:', catalogMenu); return;
-    case '❓ FAQ':
-      await sendInteractiveFAQ(chatId); return;
-    case '📱 Сайт':
+  case '🛒 Каталог':
+    await bot.sendMessage(chatId, '🛒 Каталог товарів MagicAir:\n\nОберіть категорію:', catalogMenu);
+    return;
+
+  case '❓ FAQ':
+    await sendInteractiveFAQ(chatId);
+    return;
+
+  case '📱 Сайт':
+    await bot.sendMessage(chatId,
+      '🌍 Наш сайт:\n👉 https://magicair.com.ua\n\n🛒 Тут ви можете переглянути повний каталог та оформити замовлення!',
+      { reply_markup: { inline_keyboard: [
+          [{ text: '🛒 Відкрити сайт', url: 'https://magicair.com.ua' }],
+          [{ text: '🏠 Головне меню', callback_data: 'main_menu' }]
+      ]}}
+    );
+    return;
+
+  case '📞 Контакти':
+    await sendContacts(chatId);
+    return;
+
+  case '🔍 Пошук':
+    userStates[chatId] = { step: 'search' };
+    await bot.sendMessage(chatId, '🔍 Введіть назву товару для пошуку:');
+    return;
+
+  case '💬 Менеджер':
+    if (isWorkingHours()) {
+      await startPreFilter(chatId, userName);
+    } else {
       await bot.sendMessage(chatId,
-        '🌍 Наш сайт:\n👉 https://magicair.com.ua\n\n🛒 Тут ви можете переглянути повний каталог та оформити замовлення!',
-        { reply_markup: { inline_keyboard: [
-            [{ text: '🛒 Відкрити сайт', url: 'https://magicair.com.ua' }],
-            [{ text: '🏠 Головне меню', callback_data: 'main_menu' }]
-        ]}}
-      ); return;
-    case '📞 Контакти':
-      await sendContacts(chatId); return;
-    case '🔍 Пошук':
-      userStates[chatId] = { step: 'search' };
-      await bot.sendMessage(chatId, '🔍 Введіть назву товару для пошуку:'); return;
-    case '💬 Менеджер':
-      if (isWorkingHours()) {
-        await startPreFilter(chatId, userName);
-      } else {
-        await bot.sendMessage(chatId,
-          `⏰ Ви звернулися в неробочий час.\n\n` +
-          `Графік роботи менеджерів: **з ${WORKING_HOURS.start}:00 до ${WORKING_HOURS.end}:00**.\n\n` +
-          `Чекаємо на вас завтра в робочий час!`,
-          { parse_mode: 'Markdown', ...mainMenu }
-        );
-      }
-      return;
-    case '👤 Профіль':
-      await showProfile(chatId); return;
-  }
-
-  if (userStates[chatId]?.step?.startsWith('profile_')) {
-    await handleProfileInput(chatId, text, userStates[chatId].step);
+        `⏰ Ви звернулися в неробочий час.\n\n` +
+        `Графік роботи менеджерів: **з ${WORKING_HOURS.start}:00 до ${WORKING_HOURS.end}:00**.\n\n` +
+        `Чекаємо на вас завтра в робочий час!`,
+        { parse_mode: 'Markdown', ...mainMenu }
+      );
+    }
     return;
-  }
-  if (userStates[chatId]?.step === 'search') {
-    await handleSearch(chatId, text);
-    delete userStates[chatId];
-    return;
-  }
 
-  await handleGeneralMessage(chatId, text, userName);
+  case '👤 Профіль':
+    await showProfile(chatId);
+    return;
+
+  // 🔥 НОВЫЙ CASE ДЛЯ КНОПКИ "Відправити замовлення"
+  case '✅ Відправити замовлення менеджеру':
+    const profile = userProfiles[chatId];
+    if (profile && (profile.orderStatus === 'collecting' || profile.orderStatus === 'ready')) {
+      await finalizeAndSendOrder(chatId, userName);
+    } else {
+      await bot.sendMessage(
+        chatId,
+        "У вас немає активного замовлення для відправки. Створіть нове замовлення.",
+        mainMenu
+      );
+    }
+    return;
 }
+
+if (userStates[chatId]?.step?.startsWith('profile_')) {
+  await handleProfileInput(chatId, text, userStates[chatId].step);
+  return;
+}
+if (userStates[chatId]?.step === 'search') {
+  await handleSearch(chatId, text);
+  delete userStates[chatId];
+  return;
+}
+
+await handleGeneralMessage(chatId, text, userName);
 
 // ===================== MANAGER HANDLER =====================
 async function handleManagerMessage(msg) {
@@ -3317,6 +3372,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
