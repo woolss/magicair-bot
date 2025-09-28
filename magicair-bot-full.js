@@ -1044,45 +1044,46 @@ async function handleClientMessage(msg) {
       await bot.sendMessage(chatId, '🔍 Введіть назву товару для пошуку:');
       return;
 
-    case '💬 Менеджер':
-      if (isWorkingHours()) {
-        await startPreFilter(chatId, userName);
-      } else {
-        await bot.sendMessage(chatId,
-          `⏰ Ви звернулися в неробочий час.\n\n` +
-          `Графік роботи менеджерів: **з ${WORKING_HOURS.start}:00 до ${WORKING_HOURS.end}:00**.\n\n` +
-          `Чекаємо на вас завтра в робочий час!`,
-          { parse_mode: 'Markdown', ...mainMenu }
-        );
-      }
-      return;
-
-    case '👤 Профіль':
-      await showProfile(chatId);
-      return;
-
-    // 🔥 НОВЫЙ CASE ДЛЯ КНОПКИ "Відправити замовлення"
-case '✅ Відправити замовлення менеджеру': {
-  const profile = userProfiles[chatId];
-  if (profile) {
-    if (profile.orderStatus === 'sent') {
-      await bot.sendMessage(
-        chatId,
-        "⚠️ Ваше замовлення вже було відправлено менеджеру. Створіть нове замовлення, якщо потрібно.",
-        mainMenu
-      );
-    } else if (profile.orderStatus === 'collecting' || profile.orderStatus === 'ready') {
-      await finalizeAndSendOrder(chatId, userName);
+     case '💬 Менеджер':
+    if (isWorkingHours()) {
+      await startPreFilter(chatId, userName);
     } else {
-      await bot.sendMessage(
-        chatId,
-        "У вас немає активного замовлення для відправки. Створіть нове замовлення.",
-        mainMenu
+      await bot.sendMessage(chatId,
+        `⏰ Ви звернулися в неробочий час.\n\n` +
+        `Графік роботи менеджерів: **з ${WORKING_HOURS.start}:00 до ${WORKING_HOURS.end}:00**.\n\n` +
+        `Чекаємо на вас завтра в робочий час!`,
+        { parse_mode: 'Markdown', ...mainMenu }
       );
     }
+    return;
+
+  case '👤 Профіль':
+    await showProfile(chatId);
+    return;
+
+  // 🔥 НОВЫЙ CASE ДЛЯ КНОПКИ "Відправити замовлення"
+  case '✅ Відправити замовлення менеджеру': {
+    const profile = userProfiles[chatId];
+    if (profile) {
+      if (profile.orderStatus === 'sent') {
+        await bot.sendMessage(
+          chatId,
+          "⚠️ Ваше замовлення вже було відправлено менеджеру. Створіть нове замовлення, якщо потрібно.",
+          mainMenu
+        );
+      } else if (profile.orderStatus === 'collecting' || profile.orderStatus === 'ready') {
+        await finalizeAndSendOrder(chatId, userName);
+      } else {
+        await bot.sendMessage(
+          chatId,
+          "У вас немає активного замовлення для відправки. Створіть нове замовлення.",
+          mainMenu
+        );
+      }
+    }
+    return;
   }
-  return;
-}
+} // ✅ закрываем switch (text)
 
   // ========= ДАЛЕЕ ОБРАБОТКА ПРОФИЛЯ / ПОИСКА =========
   if (userStates[chatId]?.step?.startsWith('profile_')) {
@@ -3384,6 +3385,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
