@@ -694,6 +694,29 @@ bot.on('message', async (msg) => {
     await bot.sendMessage(chatId, '⚠ Помилка. Спробуйте /start').catch(() => {});
   }
 });
+// ==================== ОБРОБКА КНОПОК INLINE ====================
+bot.on('callback_query', async (query) => {
+  const chatId = query.message.chat.id;
+  const userName = query.from.first_name || 'Клієнт';
+  const data = query.data || query.message.text;
+
+  try {
+    if (data.includes('client_chat_')) {
+      const clientId = data.replace('client_chat_', '');
+      activeManagerChats[chatId] = clientId;
+      await bot.sendMessage(chatId, `💬 Ви підключились до чату з клієнтом ${clientId}`);
+      await bot.sendMessage(clientId, "👨‍💼 Менеджер приєднався до чату.");
+    } else if (data === '✅ Відправити замовлення менеджеру') {
+      await finalizeAndSendOrder(chatId, userName);
+    } else if (data === '🏠 Головне меню') {
+      await bot.sendMessage(chatId, "📋 Головне меню:", mainMenu);
+    }
+  } catch (err) {
+    console.error("⚠ callback_query error:", err);
+  }
+
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+});
 // ==================== ЛОГИКА ОТСЛЕЖИВАННЯ І ФІНАЛІЗАЦІЇ ====================
 function initOrderTracking(chatId) {
   if (!userProfiles[chatId]) {
@@ -3376,6 +3399,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
