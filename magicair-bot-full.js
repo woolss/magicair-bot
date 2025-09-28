@@ -678,13 +678,17 @@ bot.on('message', async (msg) => {
       if (userStates[chatId]?.step !== 'manager_chat') {
         const lastOrderTime = userProfiles[chatId]?.lastOrderTime;
         if (userProfiles[chatId]?.pendingPhotoOrder) {
-          await handlePhotoClarification(chatId, text, userName);
-          return;
-        } else if (lastOrderTime && Date.now() - lastOrderTime < 60 * 1000) {
-          // ⏳ якщо пройшло < 1 хвилини — трактуємо як уточнення
-          await handleOrderClarification(chatId, text, userName);
-          return;
-        }
+  // Если это служебная кнопка — не перехватываем, пусть дойдёт до handleClientMessage
+  if (text !== '✅ Відправити замовлення менеджеру' && text !== '🏠 Головне меню') {
+    await handlePhotoClarification(chatId, text, userName);
+    return;
+  }
+} else if (lastOrderTime && Date.now() - lastOrderTime < 60 * 1000) {
+  // ⏳ якщо пройшло < 1 хвилини — трактуємо як уточнення
+  await handleOrderClarification(chatId, text, userName);
+  return;
+}
+
       }
       // все інше → як звичайне повідомлення
       await handleClientMessage(msg);
@@ -799,20 +803,23 @@ async function handlePhotoClarification(chatId, text, userName) {
   }
 
   // сохраняем уточнение в массив, но caption НЕ затираем
-  userProfiles[chatId].clarifications.push(text);
-  userProfiles[chatId].lastPhotoOrder = pending;
-  userProfiles[chatId].lastOrder = pending.caption || "(фото без коментаря)";
-  userProfiles[chatId].orderStatus = 'ready';
+ userProfiles[chatId].clarifications.push(text);
+userProfiles[chatId].lastPhotoOrder = pending;
+userProfiles[chatId].lastOrder = pending.caption || "(фото без коментаря)";
+userProfiles[chatId].orderStatus = 'ready';
 
-  await bot.sendMessage(chatId,
-    "✅ Уточнення додано до фото-замовлення!\n\n" +
-    "🎯 Натисніть '✅ Відправити замовлення менеджеру' щоб відправити зараз\n" +
-    "📝 Або додайте ще деталі протягом 5 хвилин\n" +
-    "⏰ Замовлення автоматично відправиться менеджеру через 5 хвилин",
-    orderCollectionMenu
-  );
+// больше не нужно хранить pending — он перенесён в lastPhotoOrder
+delete userProfiles[chatId].pendingPhotoOrder;
 
-  setAutoFinalize(chatId, userName);
+await bot.sendMessage(chatId,
+  "✅ Уточнення додано до фото-замовлення!\n\n" +
+  "🎯 Натисніть '✅ Відправити замовлення менеджеру' щоб відправити зараз\n" +
+  "📝 Або додайте ще деталі протягом 5 хвилин\n" +
+  "⏰ Замовлення автоматично відправиться менеджеру через 5 хвилин",
+  orderCollectionMenu
+);
+
+setAutoFinalize(chatId, userName);
 }
 
 // ==================== ФИНАЛИЗАЦИЯ ====================
@@ -3399,6 +3406,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
