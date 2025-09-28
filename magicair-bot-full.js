@@ -950,6 +950,17 @@ async function handleDirectOrder(chatId, text, userName) {
 
 // ==================== ОБРОБКА УТОЧНЕНЬ ====================
 async function handleOrderClarification(chatId, text, userName) {
+  // 🚀 Якщо клієнт натиснув кнопку моментальної відправки
+  if (text === '✅ Відправити замовлення менеджеру') {
+    await finalizeAndSendOrder(chatId, userName);
+    return;
+  }
+
+  // 🚫 Ігноруємо кнопку повернення в меню
+  if (text === '🏠 Головне меню') {
+    return;
+  }
+
   console.log(`✏️ Clarification detected from ${chatId}, text: ${text}`);
 
   const profile = userProfiles[chatId];
@@ -971,14 +982,14 @@ async function handleOrderClarification(chatId, text, userName) {
     profile.clarifications = [];
   }
 
-  // 🔥 Разделяем уточнения для фото и текста
+  // 🔥 Зберігаємо уточнення
   profile.clarifications.push(text);
   profile.lastMessage = text;
   profile.lastActivity = Date.now();
 
   const totalClarifications = profile.clarifications.length;
 
-  // Если фото-заказ → отдельный текст
+  // Якщо фото-замовлення → інший текст
   if (profile.orderType === 'photo') {
     await bot.sendMessage(chatId,
       `✅ Уточнення додано до фото-замовлення!\n\n` +
@@ -3406,6 +3417,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
