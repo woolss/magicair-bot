@@ -708,10 +708,12 @@ async function handlePhotoMessage(msg) {
     userProfiles[chatId] = { chatId, created: Date.now(), clarifications: [] };
   }
 
+  initOrderTracking(chatId);
+  userProfiles[chatId].lastPhotoOrder = { fileId, caption };
+  userProfiles[chatId].lastOrder = caption || "(фото без коментаря)"; // ✅ фикс
+  userProfiles[chatId].orderStatus = caption ? 'ready' : 'collecting';
+
   if (!caption) {
-    // Фото без описа → чекаємо уточнення
-    userProfiles[chatId].pendingPhotoOrder = { fileId };
-    initOrderTracking(chatId);
     await bot.sendMessage(chatId,
       "📷 Ви надіслали фото кульок. Щоб оформити замовлення, уточніть, будь ласка:\n\n" +
       "📅 На коли потрібна доставка?\n" +
@@ -720,49 +722,32 @@ async function handlePhotoMessage(msg) {
       "⏰ У вас є 5 хвилин для уточнень.",
       orderCollectionMenu
     );
-    
-    setAutoFinalize(chatId, userName);
-    return;
+  } else {
+    await bot.sendMessage(chatId,
+      "✅ Ваше фото-замовлення готове до відправки!\n\n" +
+      "🎯 Натисніть '✅ Відправити замовлення менеджеру' щоб відправити зараз\n" +
+      "📝 Або додайте ще деталі протягом 5 хвилин\n" +
+      "⏰ Замовлення автоматично відправиться менеджеру через 5 хвилин",
+      orderCollectionMenu
+    );
   }
 
-  // Фото з підписом → одразу готове до відправки
-  initOrderTracking(chatId);
-  userProfiles[chatId].orderStatus = 'ready';
-  userProfiles[chatId].lastPhotoOrder = { fileId, caption };
-  
-  await bot.sendMessage(chatId,
-    "✅ Ваше фото-замовлення готове до відправки!\n\n" +
-    "🎯 Натисніть '✅ Відправити замовлення менеджеру' щоб відправити зараз\n" +
-    "📝 Або додайте ще деталі протягом 5 хвилин\n" +
-    "⏰ Замовлення автоматично відправиться менеджеру через 5 хвилин",
-    orderCollectionMenu
-  );
-  
   setAutoFinalize(chatId, userName);
 }
 
 // ==================== ОБРОБКА УТОЧНЕННЯ ДО ФОТО ====================
 async function handlePhotoClarification(chatId, text, userName) {
-  // 🚫 Игнорируем служебные кнопки
-  if (text === '✅ Відправити замовлення менеджеру' || text === '🏠 Головне меню') {
-    return;
-  }
+  if (text === '✅ Відправити замовлення менеджеру' || text === '🏠 Головне меню') return;
 
   const pending = userProfiles[chatId]?.pendingPhotoOrder;
   if (!pending) return;
 
   const fileId = pending.fileId;
-  
-  if (!userProfiles[chatId].orderStatus) {
-    initOrderTracking(chatId);
-  }
-  
-  if (!userProfiles[chatId].clarifications) {
-    userProfiles[chatId].clarifications = [];
-  }
+  if (!userProfiles[chatId].clarifications) userProfiles[chatId].clarifications = [];
   userProfiles[chatId].clarifications.push(text);
-  
+
   userProfiles[chatId].lastPhotoOrder = { fileId, caption: text };
+  userProfiles[chatId].lastOrder = text; // ✅ фикс
   userProfiles[chatId].orderStatus = 'ready';
 
   await bot.sendMessage(chatId,
@@ -774,7 +759,6 @@ async function handlePhotoClarification(chatId, text, userName) {
   );
 
   delete userProfiles[chatId].pendingPhotoOrder;
-  
   setAutoFinalize(chatId, userName);
 }
 
@@ -3395,6 +3379,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
