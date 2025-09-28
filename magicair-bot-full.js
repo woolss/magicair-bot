@@ -694,6 +694,31 @@ bot.on('message', async (msg) => {
     await bot.sendMessage(chatId, '⚠ Помилка. Спробуйте /start').catch(() => {});
   }
 });
+// ==================== ЛОГИКА ОТСЛЕЖИВАННЯ І ФІНАЛІЗАЦІЇ ====================
+function initOrderTracking(chatId) {
+  if (!userProfiles[chatId]) {
+    userProfiles[chatId] = { chatId, clarifications: [] };
+  }
+  
+  userProfiles[chatId].orderStatus = 'collecting'; // collecting -> ready -> sent
+  userProfiles[chatId].clarifications = [];
+  userProfiles[chatId].lastOrderTime = Date.now();
+}
+
+function setAutoFinalize(chatId, userName) {
+  const profile = userProfiles[chatId];
+  if (!profile) return;
+
+  if (profile.autoSendTimer) {
+    clearTimeout(profile.autoSendTimer);
+  }
+
+  profile.autoSendTimer = setTimeout(async () => {
+    if (profile && (profile.orderStatus === 'ready' || profile.orderStatus === 'collecting')) {
+      await finalizeAndSendOrder(chatId, userName);
+    }
+  }, 5 * 60 * 1000);
+}
 
 // ==================== ОБРОБКА ФОТО ====================
 async function handlePhotoMessage(msg) {
@@ -3351,6 +3376,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
