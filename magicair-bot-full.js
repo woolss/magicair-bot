@@ -743,6 +743,11 @@ async function handlePhotoMessage(msg) {
 
 // ==================== ОБРОБКА УТОЧНЕННЯ ДО ФОТО ====================
 async function handlePhotoClarification(chatId, text, userName) {
+  // 🚫 Игнорируем служебные кнопки
+  if (text === '✅ Відправити замовлення менеджеру' || text === '🏠 Головне меню') {
+    return;
+  }
+
   const pending = userProfiles[chatId]?.pendingPhotoOrder;
   if (!pending) return;
 
@@ -939,6 +944,11 @@ async function handleDirectOrder(chatId, text, userName) {
 // ==================== ОБРОБКА УТОЧНЕНЬ ====================
 async function handleOrderClarification(chatId, text, userName) {
   console.log(`✏️ Clarification detected from ${chatId}, text: ${text}`);
+
+  // 🚫 Игнорируем служебные кнопки
+  if (text === '✅ Відправити замовлення менеджеру' || text === '🏠 Головне меню') {
+    return;
+  }
 
   const profile = userProfiles[chatId];
   if (!profile || profile.orderStatus === 'sent') {
@@ -3385,6 +3395,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
