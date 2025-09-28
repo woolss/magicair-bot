@@ -165,6 +165,39 @@ const holidays = [
   { date: '31.10', name: 'Хелловін', emoji: '🎃' }
 ];
 
+// Функция для очистки "зависших" состояний
+function cleanupStaleStates() {
+  console.log('🧹 Очистка зависших состояний...');
+  
+  // Проверяем все активные чаты менеджеров
+  for (const [managerId, clientId] of Object.entries(activeManagerChats)) {
+    // Если клиент не в состоянии manager_chat, удаляем связь
+    if (!userStates[clientId] || userStates[clientId].step !== 'manager_chat' || userStates[clientId].managerId !== parseInt(managerId)) {
+      console.log(`🗑 Удаляем зависший чат: менеджер ${managerId} - клиент ${clientId}`);
+      delete activeManagerChats[managerId];
+    }
+  }
+  
+  // Проверяем все состояния клиентов в manager_chat
+  for (const [clientId, state] of Object.entries(userStates)) {
+    if (state.step === 'manager_chat') {
+      const managerId = state.managerId;
+      // Если менеджер не связан с этим клиентом, очищаем состояние клиента
+      if (!managerId || activeManagerChats[managerId] !== clientId) {
+        console.log(`🗑 Удаляем зависшее состояние клиента ${clientId}`);
+        delete userStates[clientId];
+      }
+    }
+  }
+  
+  console.log('✅ Очистка завершена');
+}
+
+// ДОБАВИТЬ автоочистку каждые 10 минут
+setInterval(() => {
+  cleanupStaleStates();
+}, 10 * 60 * 1000);
+
 // ========== ANTISPAM ==========
 const userRateLimit = new Map();
 const MAX_MESSAGES_PER_MINUTE = 30;
@@ -1596,6 +1629,9 @@ async function notifyManagers(clientId, userName, topic) { // ДОБАВЛЕНО
 
 async function startManagerChatWithClient(managerId, clientId) {
   const managerName = getManagerName(managerId);
+  
+  // 🔧 ДОБАВЛЕНО: Вызываем очистку перед подключением
+  cleanupStaleStates();
 
   // Проверяем, есть ли уже активный чат у менеджера
   if (activeManagerChats[managerId]) {
@@ -1618,8 +1654,8 @@ async function startManagerChatWithClient(managerId, clientId) {
 
   // Проверяем, не занят ли клиент другим менеджером
   for (const [otherManagerId, otherClientId] of Object.entries(activeManagerChats)) {
-    if (otherClientId === clientId && otherManagerId !== managerId) {
-      const otherManagerName = getManagerName(otherManagerId);
+    if (otherClientId === clientId && otherManagerId !== managerId.toString()) { // 🔧 ИСПРАВЛЕНО: добавлено toString()
+      const otherManagerName = getManagerName(parseInt(otherManagerId));
       await bot.sendMessage(managerId, 
         `❌ Клієнт ${clientId} вже спілкується з ${otherManagerName}.`
       );
@@ -1627,9 +1663,13 @@ async function startManagerChatWithClient(managerId, clientId) {
     }
   }
 
-  // Устанавливаем соединение
+  // Устанавливаем связь
   activeManagerChats[managerId] = clientId;
-  userStates[clientId] = { step: 'manager_chat', managerId: managerId };
+  userStates[clientId] = { 
+    step: 'manager_chat', 
+    managerId: managerId,
+    startTime: Date.now() // 🔧 ДОБАВЛЕНО: время начала для отладки
+  };
   
   // Убираем клиента из очереди ожидания, если он там был
   waitingClients.delete(clientId);
@@ -1638,41 +1678,41 @@ async function startManagerChatWithClient(managerId, clientId) {
   await bot.sendMessage(managerId, `✅ Ви підключені до клієнта (${clientId}).`);
   
   // Уведомляем клиента о подключении менеджера
-try {
-  if (String(clientId).startsWith('site-')) {
-    // Если клиент с сайта → отправляем через мост
-    await sendToWebClient(clientId, 
-      `👨‍💼 Менеджер ${managerName} підключився до чату!\n` +
-      `Він готовий відповісти на ваші запитання.`
+  try {
+    if (String(clientId).startsWith('site-')) {
+      // Если клиент с сайта → отправляем через мост
+      await sendToWebClient(clientId, 
+        `👨‍💼 Менеджер ${managerName} підключився до чату!\n` +
+        `Він готовий відповісти на ваші запитання.`
+      );
+
+      const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
+      await sendToWebClient(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
+      await logMessage(managerId, clientId, welcomeMessage, 'manager');
+    } else {
+      // Если клиент Telegram → обычная отправка
+      await bot.sendMessage(clientId, 
+        `👨‍💼 Менеджер ${managerName} підключився до чату!\n` +
+        `Він готовий відповісти на ваші запитання.`, 
+        clientInChatMenu
+      );
+
+      const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
+      await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
+      await logMessage(managerId, clientId, welcomeMessage, 'manager');
+    }
+    
+  } catch (error) {
+    console.error(`Failed to notify client ${clientId}:`, error.message);
+    await bot.sendMessage(managerId, 
+      `⚠️ Не вдалося надіслати повідомлення клієнту ${clientId}.\n` +
+      `Можливо, клієнт заблокував бота або видалив чат.`
     );
 
-    const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
-    await sendToWebClient(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
-    await logMessage(managerId, clientId, welcomeMessage, 'manager');
-  } else {
-    // Если клиент Telegram → обычная отправка
-    await bot.sendMessage(clientId, 
-      `👨‍💼 Менеджер ${managerName} підключився до чату!\n` +
-      `Він готовий відповісти на ваші запитання.`, 
-      clientInChatMenu
-    );
-
-    const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
-    await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
-    await logMessage(managerId, clientId, welcomeMessage, 'manager');
+    // 🔧 ДОБАВЛЕНО: Очищаем состояние при ошибке
+    delete activeManagerChats[managerId];
+    delete userStates[clientId];
   }
-  
-} catch (error) {
-  console.error(`Failed to notify client ${clientId}:`, error.message);
-  await bot.sendMessage(managerId, 
-    `⚠️ Не вдалося надіслати повідомлення клієнту ${clientId}.\n` +
-    `Можливо, клієнт заблокував бота або видалив чат.`
-  );
-
-  delete activeManagerChats[managerId];
-  delete userStates[clientId];
-}
-
 }
 
 // --- ИСПРАВЛЕННАЯ функция для отправки информации о товарах (открывается в Telegram) ---
@@ -2171,13 +2211,18 @@ async function sendToWebClient(clientId, message) {
 // ========== ИСПРАВЛЕННЫЕ ФУНКЦИИ МЕНЕДЖЕРА ==========
 async function forwardToManager(clientId, text, userName) {
   const managerId = userStates[clientId]?.managerId;
-  const managerName = getManagerName(managerId);
+  
   if (managerId && activeManagerChats[managerId] === clientId) {
+    // 🔧 ИСПРАВЛЕНО: Получаем имя менеджера для логирования
+    const managerName = getManagerName(managerId);
     await bot.sendMessage(managerId, `👤 ${userName} (${clientId}): ${text}`);
     await logMessage(clientId, managerId, text, 'client');
   } else {
-    await bot.sendMessage(clientId, '⚠ З\'єднання з менеджером втрачено. Спробуйте ще раз.', mainMenu);
+    // 🔧 ИСПРАВЛЕНО: Добавлен лог для отладки
+    console.log(`⚠️ Некорректное состояние чата для клиента ${clientId}, очищаем...`);
     delete userStates[clientId];
+    
+    await bot.sendMessage(clientId, '⚠️ З\'єднання з менеджером втрачено. Спробуйте ще раз.', mainMenu);
   }
 }
 
@@ -2196,13 +2241,18 @@ async function forwardToClient(clientId, text) {
 async function handleEndCommand(chatId) {
   if (userStates[chatId]?.step === 'manager_chat') {
     const managerId = userStates[chatId].managerId;
+    
+    // 🔧 ИСПРАВЛЕНО: Получаем имя менеджера ДО очистки
     const managerName = getManagerName(managerId);
+    
+    // Очищаем связь менеджера, если он был подключен к этому клиенту
     if (activeManagerChats[managerId] === chatId) {
       delete activeManagerChats[managerId];
+      // 🔧 ИСПРАВЛЕНО: Добавляем имя менеджера в сообщение
       await bot.sendMessage(managerId, `✅ Клієнт завершив чат.`, managerMenu);
     }
 
-    // если клиент с сайта → уведомляем через мост
+    // Уведомляем клиента
     if (String(chatId).startsWith('site-')) {
       await sendToWebClient(chatId, '✅ Ви завершили чат.');
     } else {
@@ -2217,15 +2267,24 @@ async function handleEndCommand(chatId) {
 
 async function endManagerChat(managerId) {
   const clientId = activeManagerChats[managerId];
+  
   if (clientId) {
+    // 🔧 ИСПРАВЛЕНО: Получаем имя менеджера ДО удаления связи
+    const managerName = getManagerName(managerId);
+    
+    // Очищаем состояния
     delete activeManagerChats[managerId];
     delete userStates[clientId];
 
-    // если клиент с сайта
-    if (String(clientId).startsWith('site-')) {
-      await sendToWebClient(clientId, '✅ Менеджер завершив чат.');
-    } else {
-      await bot.sendMessage(clientId, '✅ Менеджер завершив чат.', mainMenu);
+    // Уведомляем клиента
+    try {
+      if (String(clientId).startsWith('site-')) {
+        await sendToWebClient(clientId, `✅ Менеджер ${managerName} завершив чат.`);
+      } else {
+        await bot.sendMessage(clientId, `✅ Менеджер ${managerName} завершив чат.`, mainMenu);
+      }
+    } catch (error) {
+      console.log(`Не удалось уведомить клиента ${clientId} о завершении чата:`, error.message);
     }
   }
 
@@ -2429,6 +2488,9 @@ async function sendClientHistory(managerId, clientId, offset = 0) {
 }
 
 async function showClientsList(managerId) {
+  // 🔧 ДОБАВЛЕНО: Очищаем зависшие состояния перед показом списка
+  cleanupStaleStates();
+  
   let clientsList = '📋 КЛІЄНТИ:\n\n';
   const waitingClientsList = Array.from(waitingClients);
 
@@ -3417,6 +3479,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
