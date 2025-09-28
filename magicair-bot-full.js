@@ -1062,19 +1062,27 @@ async function handleClientMessage(msg) {
       return;
 
     // 🔥 НОВЫЙ CASE ДЛЯ КНОПКИ "Відправити замовлення"
-    case '✅ Відправити замовлення менеджеру':
-      const profile = userProfiles[chatId];
-      if (profile && (profile.orderStatus === 'collecting' || profile.orderStatus === 'ready')) {
-        await finalizeAndSendOrder(chatId, userName);
-      } else {
-        await bot.sendMessage(
-          chatId,
-          "У вас немає активного замовлення для відправки. Створіть нове замовлення.",
-          mainMenu
-        );
-      }
-      return;
-  } // <-- закрываем switch
+case '✅ Відправити замовлення менеджеру': {
+  const profile = userProfiles[chatId];
+  if (profile) {
+    if (profile.orderStatus === 'sent') {
+      await bot.sendMessage(
+        chatId,
+        "⚠️ Ваше замовлення вже було відправлено менеджеру. Створіть нове замовлення, якщо потрібно.",
+        mainMenu
+      );
+    } else if (profile.orderStatus === 'collecting' || profile.orderStatus === 'ready') {
+      await finalizeAndSendOrder(chatId, userName);
+    } else {
+      await bot.sendMessage(
+        chatId,
+        "У вас немає активного замовлення для відправки. Створіть нове замовлення.",
+        mainMenu
+      );
+    }
+  }
+  return;
+}
 
   // ========= ДАЛЕЕ ОБРАБОТКА ПРОФИЛЯ / ПОИСКА =========
   if (userStates[chatId]?.step?.startsWith('profile_')) {
@@ -3376,6 +3384,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
