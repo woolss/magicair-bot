@@ -198,6 +198,7 @@ setInterval(() => {
   cleanupStaleStates();
 }, 10 * 60 * 1000);
 
+const managerNotifications = {}; // Хранит ID уведомлений о новых клиентах с кнопкой "Почати чат"
 // ========== ANTISPAM ==========
 const userRateLimit = new Map();
 const MAX_MESSAGES_PER_MINUTE = 30;
@@ -3479,6 +3480,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
