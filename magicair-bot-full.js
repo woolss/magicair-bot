@@ -1184,6 +1184,10 @@ async function handleClientMessage(msg) {
 
   // ========= SWITCH ПО КНОПКАМ =========
   switch (text) {
+  case '🏠 Головне меню':
+    await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
+    return;
+      
     case '🛒 Каталог':
       await bot.sendMessage(chatId, '🛒 Каталог товарів MagicAir:\n\nОберіть категорію:', catalogMenu);
       return;
@@ -1729,6 +1733,7 @@ async function notifyManagers(clientId, userName, topic) { // ДОБАВЛЕНО
   }
 }
 
+// ==================== ОБНОВЛЕННАЯ ФУНКЦИЯ СТАРТА ЧАТА ====================
 async function startManagerChatWithClient(managerId, clientId) {
   const managerName = getManagerName(managerId);
 
@@ -1762,16 +1767,8 @@ async function startManagerChatWithClient(managerId, clientId) {
     }
   }
 
-  // Видаляємо повідомлення про нового клієнта
-  if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
-    try {
-      await bot.deleteMessage(managerId, managerNotifications[managerId][clientId]);
-      delete managerNotifications[managerId][clientId];
-      console.log(`🗑️ Видалено повідомлення про клієнта ${clientId} у менеджера ${managerId}`);
-    } catch (err) {
-      console.log(`Не вдалося видалити повідомлення: ${err.message}`);
-    }
-  }
+  // 🔥 ВАЖНО: Удаляем кнопку сразу при старте чата
+  await removeManagerNotificationButton(managerId, clientId);
 
   // Встановлюємо зв'язок
   activeManagerChats[managerId] = clientId;
@@ -1800,7 +1797,7 @@ async function startManagerChatWithClient(managerId, clientId) {
       await bot.sendMessage(clientId, 
         `👨‍💼 Менеджер ${managerName} підключився до чату!\n` +
         `Він готовий відповісти на ваші запитання.`, 
-        clientInChatMenu
+        clientInChatMenu  // Використовуємо спецменю
       );
       const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
       await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
@@ -1809,7 +1806,7 @@ async function startManagerChatWithClient(managerId, clientId) {
   } catch (error) {
     console.error(`Failed to notify client ${clientId}:`, error.message);
     await bot.sendMessage(managerId, 
-      `⚠️ Не вдалося надіслати повідомлення клієнту ${clientId}.\n` +
+      `⚠️ Не вдалось надіслати повідомлення клієнту ${clientId}.\n` +
       `Можливо, клієнт заблокував бота або видалив чат.`
     );
     delete activeManagerChats[managerId];
@@ -2340,79 +2337,75 @@ async function forwardToClient(clientId, text) {
   }
 }
 
+// ==================== ОБНОВЛЕННАЯ ФУНКЦИЯ ЗАВЕРШЕНИЯ ЧАТА ====================
 async function handleEndCommand(chatId) {
+  // Проверяем, является ли это клиентом в чате с менеджером
   if (userStates[chatId]?.step === 'manager_chat') {
     const managerId = userStates[chatId].managerId;
     const managerName = getManagerName(managerId);
-
-    // 🔥 Убираем кнопку у менеджера, если клиент завершил чат
-    if (managerNotifications[managerId] && managerNotifications[managerId][chatId]) {
-      const msgId = managerNotifications[managerId][chatId];
-      try {
-        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
-          chat_id: managerId,
-          message_id: msgId
-        });
-        console.log(`🗑️ Клієнт завершив чат — кнопку прибрано (${chatId})`);
-      } catch (err) {
-        console.log(`Не вдалося прибрати кнопку, пробую видалити повідомлення: ${err.message}`);
-        try {
-          await bot.deleteMessage(managerId, msgId);
-        } catch (err2) {
-          console.log(`Повідомлення вже видалено або недоступне: ${err2.message}`);
-        }
-      }
-      delete managerNotifications[managerId][chatId];
-    }
-
+    
+    // 🔥 ВАЖНО: Удаляем кнопку у менеджера независимо от того, кто завершил чат
+    await removeManagerNotificationButton(managerId, chatId);
+    
+    // Очищаем связи
     if (activeManagerChats[managerId] === chatId) {
       delete activeManagerChats[managerId];
       await bot.sendMessage(managerId, `✅ Клієнт завершив чат.`, managerMenu);
     }
-
+    
+    // Уведомляем клиента
     if (String(chatId).startsWith('site-')) {
-      await sendToWebClient(chatId, '✅ Ви завершили чат.');
+      await sendToWebClient(chatId, '✅ Чат завершено.');
     } else {
       await bot.sendMessage(chatId, '✅ Чат завершено.', mainMenu);
     }
-
+    
     delete userStates[chatId];
   } else if (isManager(chatId)) {
+    // Менеджер завершает чат
     await endManagerChat(chatId);
+  } else {
+    // Обычный пользователь не в чате
+    await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
   }
 }
-
+// ==================== НОВАЯ ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ КНОПКИ ====================
+async function removeManagerNotificationButton(managerId, clientId) {
+  if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
+    const msgId = managerNotifications[managerId][clientId];
+    try {
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+        chat_id: managerId,
+        message_id: msgId
+      });
+      console.log(`🗑️ Кнопка убрана у менеджера ${managerId} для клиента ${clientId}`);
+    } catch (err) {
+      console.log(`Не удалось отредактировать, пробуем удалить: ${err.message}`);
+      try {
+        await bot.deleteMessage(managerId, msgId);
+        console.log(`🗑️ Уведомление удалено у менеджера ${managerId}`);
+      } catch (err2) {
+        console.log(`Сообщение уже удалено или недоступно: ${err2.message}`);
+      }
+    }
+    delete managerNotifications[managerId][clientId];
+  }
+}
+// ==================== ОБНОВЛЕННАЯ ФУНКЦИЯ ЗАВЕРШЕНИЯ ЧАТА МЕНЕДЖЕРОМ ====================
 async function endManagerChat(managerId) {
   const clientId = activeManagerChats[managerId];
   
   if (clientId) {
     const managerName = getManagerName(managerId);
-
-    // 🔥 Убираем кнопку у менеджера, если он завершил чат
-    if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
-      const msgId = managerNotifications[managerId][clientId];
-      try {
-        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
-          chat_id: managerId,
-          message_id: msgId
-        });
-        console.log(`🗑️ Менеджер завершив чат — кнопку прибрано (${clientId})`);
-      } catch (err) {
-        console.log(`Не вдалося прибрати кнопку, пробую видалити повідомлення: ${err.message}`);
-        try {
-          await bot.deleteMessage(managerId, msgId);
-        } catch (err2) {
-          console.log(`Повідомлення вже видалено або недоступне: ${err2.message}`);
-        }
-      }
-      delete managerNotifications[managerId][clientId];
-    }
     
-    // Очищаємо стани
+    // 🔥 ВСЕГДА удаляем кнопку при завершении чата
+    await removeManagerNotificationButton(managerId, clientId);
+    
+    // Очищаем состояния
     delete activeManagerChats[managerId];
     delete userStates[clientId];
-
-    // Повідомляємо клієнта
+    
+    // Уведомляем клиента
     try {
       if (String(clientId).startsWith('site-')) {
         await sendToWebClient(clientId, `✅ Менеджер ${managerName} завершив чат.`);
@@ -2420,39 +2413,11 @@ async function endManagerChat(managerId) {
         await bot.sendMessage(clientId, `✅ Менеджер ${managerName} завершив чат.`, mainMenu);
       }
     } catch (error) {
-      console.log(`Не вдалося повідомити клієнта ${clientId} про завершення чату:`, error.message);
+      console.log(`Не удалось уведомить клиента ${clientId} о завершении чата:`, error.message);
     }
   }
-
+  
   await bot.sendMessage(managerId, '✅ Чат завершено.', managerMenu);
-}
-
-async function cleanOldNotifications(managerId) {
-  if (!managerNotifications[managerId]) return;
-  
-  let cleaned = 0;
-  for (const [clientId, msgId] of Object.entries(managerNotifications[managerId])) {
-    if (!waitingClients.has(parseInt(clientId)) && !waitingClients.has(clientId)) {
-      try {
-        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
-          chat_id: managerId,
-          message_id: msgId
-        });
-        cleaned++;
-      } catch (err) {
-        try {
-          await bot.deleteMessage(managerId, msgId);
-        } catch (err2) {
-          // сообщение уже удалено
-        }
-      }
-      delete managerNotifications[managerId][clientId];
-    }
-  }
-  
-  if (cleaned > 0) {
-    console.log(`🧹 Очищено ${cleaned} старих повідомлень у менеджера ${managerId}`);
-  }
 }
 
 // ========== ФУНКЦІЇ ІСТОРІЇ ==========
@@ -3646,6 +3611,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
