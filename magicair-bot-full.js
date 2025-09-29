@@ -2615,10 +2615,27 @@ async function sendClientHistory(managerId, clientId, offset = 0) {
     bot.sendMessage(managerId, '⚠️ Помилка при завантаженні історії.');
   }
 }
+// ==================== ОЧИСТКА СТАРЫХ УВЕДОМЛЕНЬ ====================
+async function cleanOldNotifications() {
+  for (const managerId of MANAGERS) {
+    if (!managerNotifications[managerId]) continue;
+
+    for (const [clientId, msgId] of Object.entries(managerNotifications[managerId])) {
+      // Если клиент не в очереди и не в активном чате - удаляем кнопку
+      if (!waitingClients.has(clientId) &&
+          !waitingClients.has(String(clientId)) &&
+          !Object.values(activeManagerChats).includes(clientId) &&
+          !Object.values(activeManagerChats).includes(String(clientId))) {
+        
+        await removeManagerNotificationButton(managerId, clientId);
+      }
+    }
+  }
+}
 
 async function showClientsList(managerId) {
   // 🔥 НОВЕ: Очищаємо старі повідомлення перед показом списку
-  await cleanOldNotifications(managerId);
+  await cleanOldNotifications();   // ✅ без аргумента
   
   // 🔧 ДОДАНО: Очищаємо завислі стани перед показом списку
   cleanupStaleStates();
@@ -2633,6 +2650,7 @@ async function showClientsList(managerId) {
     await bot.sendMessage(managerId, clientsList, managerMenu);
     return;
   }
+
 
   if (waitingClientsList.length > 0) {
     clientsList += '⏳ *ОЧІКУЮТЬ:*\n';
@@ -3611,6 +3629,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
