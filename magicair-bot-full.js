@@ -868,7 +868,7 @@ async function finalizeAndSendOrder(chatId, userName) {
     delete profile.autoSendTimer;
   }
 
-  // блок уточнений
+  // блок уточнень
   let clarificationsBlock = "";
   if (profile.clarifications?.length > 0) {
     clarificationsBlock = "\n\n➡️ Уточнення:\n" + profile.clarifications.join("\n");
@@ -884,11 +884,11 @@ async function finalizeAndSendOrder(chatId, userName) {
   const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
   const notifyList = freeManagers.length ? freeManagers : MANAGERS;
 
-  // всегда отправляем фото, если это фото-заказ
+  // завжди відправляємо фото, якщо це фото-замовлення
   if (profile.orderType === 'photo' && profile.lastPhotoOrder) {
     for (const managerId of notifyList) {
       try {
-        await bot.sendPhoto(managerId, profile.lastPhotoOrder.fileId, {
+        const sentMsg = await bot.sendPhoto(managerId, profile.lastPhotoOrder.fileId, {
           caption: `📷 Фото-замовлення від ${userName} (ID: ${chatId}):\n\n` +
                    `📝 Початковий коментар: ${profile.lastPhotoOrder.caption || "(без коментаря)"}\n\n` +
                    `➡️ Фінальне замовлення:\n${profile.lastOrder}${clarificationsBlock}`,
@@ -898,6 +898,11 @@ async function finalizeAndSendOrder(chatId, userName) {
             ]
           }
         });
+        
+        // 🔥 НОВЕ: Зберігаємо ID повідомлення
+        if (!managerNotifications[managerId]) managerNotifications[managerId] = {};
+        managerNotifications[managerId][chatId] = sentMsg.message_id;
+        
       } catch (err) {
         console.error("Failed to notify manager with photo order", managerId, err?.message || err);
       }
@@ -905,7 +910,7 @@ async function finalizeAndSendOrder(chatId, userName) {
   } else {
     for (const managerId of notifyList) {
       try {
-        await bot.sendMessage(managerId,
+        const sentMsg = await bot.sendMessage(managerId,
           `🆕 Фінальне замовлення від ${userName} (ID: ${chatId}):\n\n${profile.lastOrder}${clarificationsBlock}`,
           {
             reply_markup: {
@@ -915,6 +920,11 @@ async function finalizeAndSendOrder(chatId, userName) {
             }
           }
         );
+        
+        // 🔥 НОВЕ: Зберігаємо ID повідомлення
+        if (!managerNotifications[managerId]) managerNotifications[managerId] = {};
+        managerNotifications[managerId][chatId] = sentMsg.message_id;
+        
       } catch (err) {
         console.error("Failed to notify manager with text order", managerId, err?.message || err);
       }
@@ -1631,20 +1641,17 @@ async function notifyManagers(clientId, userName, topic) { // ДОБАВЛЕНО
 async function startManagerChatWithClient(managerId, clientId) {
   const managerName = getManagerName(managerId);
   
-  // 🔧 ДОБАВЛЕНО: Вызываем очистку перед подключением
   cleanupStaleStates();
 
-  // Проверяем, есть ли уже активный чат у менеджера
+  // Перевіряємо активний чат
   if (activeManagerChats[managerId]) {
     const currentClientId = activeManagerChats[managerId];
     
-    // Если менеджер пытается подключиться к тому же клиенту - просто уведомляем
     if (currentClientId === clientId) {
       await bot.sendMessage(managerId, `ℹ️ Ви вже підключені до цього клієнта (${clientId}).`);
       return;
     }
     
-    // Если к другому клиенту - предлагаем завершить текущий чат
     await bot.sendMessage(managerId, 
       `⚠️ У вас активний чат з клієнтом ${currentClientId}.\n\n` +
       `Спочатку завершіть поточний чат кнопкою "🛑 Завершити чат", ` +
@@ -1653,9 +1660,9 @@ async function startManagerChatWithClient(managerId, clientId) {
     return;
   }
 
-  // Проверяем, не занят ли клиент другим менеджером
+  // Перевіряємо, не зайнятий чи клієнт іншим менеджером
   for (const [otherManagerId, otherClientId] of Object.entries(activeManagerChats)) {
-    if (otherClientId === clientId && otherManagerId !== managerId.toString()) { // 🔧 ИСПРАВЛЕНО: добавлено toString()
+    if (otherClientId === clientId && otherManagerId !== managerId.toString()) {
       const otherManagerName = getManagerName(parseInt(otherManagerId));
       await bot.sendMessage(managerId, 
         `❌ Клієнт ${clientId} вже спілкується з ${otherManagerName}.`
@@ -1664,24 +1671,32 @@ async function startManagerChatWithClient(managerId, clientId) {
     }
   }
 
-  // Устанавливаем связь
+  // 🔥 НОВЕ: Видаляємо повідомлення про нового клієнта
+  if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
+    try {
+      await bot.deleteMessage(managerId, managerNotifications[managerId][clientId]);
+      delete managerNotifications[managerId][clientId];
+      console.log(`🗑️ Видалено повідомлення про клієнта ${clientId} у менеджера ${managerId}`);
+    } catch (err) {
+      console.log(`Не вдалося видалити повідомлення: ${err.message}`);
+    }
+  }
+
+  // Встановлюємо зв'язок
   activeManagerChats[managerId] = clientId;
   userStates[clientId] = { 
     step: 'manager_chat', 
     managerId: managerId,
-    startTime: Date.now() // 🔧 ДОБАВЛЕНО: время начала для отладки
+    startTime: Date.now()
   };
   
-  // Убираем клиента из очереди ожидания, если он там был
   waitingClients.delete(clientId);
 
-  // Уведомляем менеджера
   await bot.sendMessage(managerId, `✅ Ви підключені до клієнта (${clientId}).`);
   
-  // Уведомляем клиента о подключении менеджера
+  // Повідомляємо клієнта
   try {
     if (String(clientId).startsWith('site-')) {
-      // Если клиент с сайта → отправляем через мост
       await sendToWebClient(clientId, 
         `👨‍💼 Менеджер ${managerName} підключився до чату!\n` +
         `Він готовий відповісти на ваші запитання.`
@@ -1691,7 +1706,6 @@ async function startManagerChatWithClient(managerId, clientId) {
       await sendToWebClient(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
       await logMessage(managerId, clientId, welcomeMessage, 'manager');
     } else {
-      // Если клиент Telegram → обычная отправка
       await bot.sendMessage(clientId, 
         `👨‍💼 Менеджер ${managerName} підключився до чату!\n` +
         `Він готовий відповісти на ваші запитання.`, 
@@ -1710,7 +1724,6 @@ async function startManagerChatWithClient(managerId, clientId) {
       `Можливо, клієнт заблокував бота або видалив чат.`
     );
 
-    // 🔧 ДОБАВЛЕНО: Очищаем состояние при ошибке
     delete activeManagerChats[managerId];
     delete userStates[clientId];
   }
@@ -2270,14 +2283,25 @@ async function endManagerChat(managerId) {
   const clientId = activeManagerChats[managerId];
   
   if (clientId) {
-    // 🔧 ИСПРАВЛЕНО: Получаем имя менеджера ДО удаления связи
     const managerName = getManagerName(managerId);
     
-    // Очищаем состояния
+    // 🔥 НОВЕ: Видаляємо повідомлення якщо воно залишилось
+    if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
+      try {
+        await bot.deleteMessage(managerId, managerNotifications[managerId][clientId]);
+        delete managerNotifications[managerId][clientId];
+        console.log(`🗑️ Видалено повідомлення при завершенні чату: ${clientId}`);
+      } catch (err) {
+        // Повідомлення вже видалено або недоступне
+        console.log(`Повідомлення вже видалено: ${err.message}`);
+      }
+    }
+    
+    // Очищаємо стани
     delete activeManagerChats[managerId];
     delete userStates[clientId];
 
-    // Уведомляем клиента
+    // Повідомляємо клієнта
     try {
       if (String(clientId).startsWith('site-')) {
         await sendToWebClient(clientId, `✅ Менеджер ${managerName} завершив чат.`);
@@ -2285,13 +2309,32 @@ async function endManagerChat(managerId) {
         await bot.sendMessage(clientId, `✅ Менеджер ${managerName} завершив чат.`, mainMenu);
       }
     } catch (error) {
-      console.log(`Не удалось уведомить клиента ${clientId} о завершении чата:`, error.message);
+      console.log(`Не вдалося повідомити клієнта ${clientId} про завершення чату:`, error.message);
     }
   }
 
   await bot.sendMessage(managerId, '✅ Чат завершено.', managerMenu);
 }
-
+async function cleanOldNotifications(managerId) {
+  if (!managerNotifications[managerId]) return;
+  
+  let cleaned = 0;
+  for (const [clientId, msgId] of Object.entries(managerNotifications[managerId])) {
+    if (!waitingClients.has(parseInt(clientId)) && !waitingClients.has(clientId)) {
+      try {
+        await bot.deleteMessage(managerId, msgId);
+        cleaned++;
+      } catch (err) {
+        // Повідомлення вже видалено
+      }
+      delete managerNotifications[managerId][clientId];
+    }
+  }
+  
+  if (cleaned > 0) {
+    console.log(`🧹 Очищено ${cleaned} старих повідомлень у менеджера ${managerId}`);
+  }
+}
 // ========== ФУНКЦІЇ ІСТОРІЇ ==========
 async function searchClientHistory(managerId, query) {
   if (!pool) {
@@ -2489,7 +2532,10 @@ async function sendClientHistory(managerId, clientId, offset = 0) {
 }
 
 async function showClientsList(managerId) {
-  // 🔧 ДОБАВЛЕНО: Очищаем зависшие состояния перед показом списка
+  // 🔥 НОВЕ: Очищаємо старі повідомлення перед показом списку
+  await cleanOldNotifications(managerId);
+  
+  // 🔧 ДОДАНО: Очищаємо завислі стани перед показом списку
   cleanupStaleStates();
   
   let clientsList = '📋 КЛІЄНТИ:\n\n';
@@ -3480,6 +3526,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
