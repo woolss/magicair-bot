@@ -1682,6 +1682,12 @@ async function startManagerChatWithClient(managerId, clientId) {
     }
   }
 
+  // 🔒 Перевіряємо, що клієнт ще доступний
+  if (!waitingClients.has(clientId) && !waitingClients.has(String(clientId))) {
+    await bot.sendMessage(managerId, "❌ Цей клієнт більше недоступний.");
+    return;
+  }
+
   // Встановлюємо зв'язок
   activeManagerChats[managerId] = clientId;
   userStates[clientId] = { 
@@ -1691,6 +1697,7 @@ async function startManagerChatWithClient(managerId, clientId) {
   };
   
   waitingClients.delete(clientId);
+  waitingClients.delete(String(clientId));
 
   await bot.sendMessage(managerId, `✅ Ви підключені до клієнта (${clientId}).`);
   
@@ -3558,6 +3565,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
