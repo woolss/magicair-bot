@@ -2255,18 +2255,33 @@ async function forwardToClient(clientId, text) {
 async function handleEndCommand(chatId) {
   if (userStates[chatId]?.step === 'manager_chat') {
     const managerId = userStates[chatId].managerId;
-    
-    // 🔧 ИСПРАВЛЕНО: Получаем имя менеджера ДО очистки
     const managerName = getManagerName(managerId);
-    
-    // Очищаем связь менеджера, если он был подключен к этому клиенту
+
+    // 🔥 Убираем кнопку у менеджера, если клиент завершил чат
+    if (managerNotifications[managerId] && managerNotifications[managerId][chatId]) {
+      const msgId = managerNotifications[managerId][chatId];
+      try {
+        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+          chat_id: managerId,
+          message_id: msgId
+        });
+        console.log(`🗑️ Клієнт завершив чат — кнопку прибрано (${chatId})`);
+      } catch (err) {
+        console.log(`Не вдалося прибрати кнопку, пробую видалити повідомлення: ${err.message}`);
+        try {
+          await bot.deleteMessage(managerId, msgId);
+        } catch (err2) {
+          console.log(`Повідомлення вже видалено або недоступне: ${err2.message}`);
+        }
+      }
+      delete managerNotifications[managerId][chatId];
+    }
+
     if (activeManagerChats[managerId] === chatId) {
       delete activeManagerChats[managerId];
-      // 🔧 ИСПРАВЛЕНО: Добавляем имя менеджера в сообщение
       await bot.sendMessage(managerId, `✅ Клієнт завершив чат.`, managerMenu);
     }
 
-    // Уведомляем клиента
     if (String(chatId).startsWith('site-')) {
       await sendToWebClient(chatId, '✅ Ви завершили чат.');
     } else {
@@ -2284,17 +2299,25 @@ async function endManagerChat(managerId) {
   
   if (clientId) {
     const managerName = getManagerName(managerId);
-    
-    // 🔥 НОВЕ: Видаляємо повідомлення якщо воно залишилось
+
+    // 🔥 Убираем кнопку у менеджера, если он завершил чат
     if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
+      const msgId = managerNotifications[managerId][clientId];
       try {
-        await bot.deleteMessage(managerId, managerNotifications[managerId][clientId]);
-        delete managerNotifications[managerId][clientId];
-        console.log(`🗑️ Видалено повідомлення при завершенні чату: ${clientId}`);
+        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+          chat_id: managerId,
+          message_id: msgId
+        });
+        console.log(`🗑️ Менеджер завершив чат — кнопку прибрано (${clientId})`);
       } catch (err) {
-        // Повідомлення вже видалено або недоступне
-        console.log(`Повідомлення вже видалено: ${err.message}`);
+        console.log(`Не вдалося прибрати кнопку, пробую видалити повідомлення: ${err.message}`);
+        try {
+          await bot.deleteMessage(managerId, msgId);
+        } catch (err2) {
+          console.log(`Повідомлення вже видалено або недоступне: ${err2.message}`);
+        }
       }
+      delete managerNotifications[managerId][clientId];
     }
     
     // Очищаємо стани
@@ -2315,6 +2338,7 @@ async function endManagerChat(managerId) {
 
   await bot.sendMessage(managerId, '✅ Чат завершено.', managerMenu);
 }
+
 async function cleanOldNotifications(managerId) {
   if (!managerNotifications[managerId]) return;
   
@@ -2322,10 +2346,17 @@ async function cleanOldNotifications(managerId) {
   for (const [clientId, msgId] of Object.entries(managerNotifications[managerId])) {
     if (!waitingClients.has(parseInt(clientId)) && !waitingClients.has(clientId)) {
       try {
-        await bot.deleteMessage(managerId, msgId);
+        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+          chat_id: managerId,
+          message_id: msgId
+        });
         cleaned++;
       } catch (err) {
-        // Повідомлення вже видалено
+        try {
+          await bot.deleteMessage(managerId, msgId);
+        } catch (err2) {
+          // сообщение уже удалено
+        }
       }
       delete managerNotifications[managerId][clientId];
     }
@@ -2335,6 +2366,7 @@ async function cleanOldNotifications(managerId) {
     console.log(`🧹 Очищено ${cleaned} старих повідомлень у менеджера ${managerId}`);
   }
 }
+
 // ========== ФУНКЦІЇ ІСТОРІЇ ==========
 async function searchClientHistory(managerId, query) {
   if (!pool) {
@@ -3526,6 +3558,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
