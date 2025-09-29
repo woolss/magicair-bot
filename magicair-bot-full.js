@@ -2415,6 +2415,13 @@ async function endManagerChat(managerId) {
     } catch (error) {
       console.log(`Не удалось уведомить клиента ${clientId} о завершении чата:`, error.message);
     }
+  } else {
+    // ⚡ НОВОЕ: чистим все висячие уведомления, если clientId уже нет
+    if (managerNotifications[managerId]) {
+      for (const staleClientId of Object.keys(managerNotifications[managerId])) {
+        await removeManagerNotificationButton(managerId, staleClientId);
+      }
+    }
   }
   
   await bot.sendMessage(managerId, '✅ Чат завершено.', managerMenu);
@@ -3629,6 +3636,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
