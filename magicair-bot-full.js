@@ -735,22 +735,24 @@ bot.on('message', async (msg) => {
 
 // ==================== ОБРОБКА КНОПОК INLINE ====================
 bot.on('callback_query', async (query) => {
-  const managerId = query.from.id; // менеджер = тот, кто нажал кнопку
-  const data = query.data || query.message.text;
+  const managerId = query.from.id;
+  const data = query.data || '';
 
   try {
     if (data.startsWith('client_chat_')) {
-      const clientIdRaw = data.replace('client_chat_', '');
-      const clientId = clientIdRaw.startsWith('site-') ? clientIdRaw : parseInt(clientIdRaw, 10);
+      const raw = data.replace('client_chat_', '');
+      const clientId = raw.startsWith('site-') ? raw : parseInt(raw, 10);
 
-      // Запускаем безопасное подключение
+      // 🔒 Перевірка доступності тільки тут
+      if (!waitingClients.has(clientId) && !waitingClients.has(String(clientId))) {
+        await bot.sendMessage(managerId, "❌ Цей клієнт більше недоступний.");
+        return;
+      }
+
+      // 🚀 запускаем основную функцию
       await startManagerChatWithClient(managerId, clientId);
 
-      await bot.answerCallbackQuery(query.id).catch(() => {});
-      return;
-    }
-
-    if (data === '✅ Відправити замовлення менеджеру') {
+    } else if (data === '✅ Відправити замовлення менеджеру') {
       await finalizeAndSendOrder(managerId, query.from.first_name || 'Клієнт');
     } else if (data === '🏠 Головне меню') {
       await bot.sendMessage(managerId, "📋 Головне меню:", mainMenu);
@@ -1649,13 +1651,6 @@ async function startManagerChatWithClient(managerId, clientId) {
   const managerName = getManagerName(managerId);
 
   cleanupStaleStates();
-
-  // 🔒 Захист: перевіряємо, чи клієнт ще доступний
-  if (!waitingClients.has(clientId) && !waitingClients.has(String(clientId))) {
-    await bot.sendMessage(managerId, "❌ Цей клієнт більше недоступний.");
-    return;
-  }
-
   // Перевіряємо активний чат
   if (activeManagerChats[managerId]) {
     const currentClientId = activeManagerChats[managerId];
@@ -3572,6 +3567,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
