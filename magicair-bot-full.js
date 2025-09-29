@@ -743,7 +743,7 @@ bot.on('callback_query', async (query) => {
       const raw = data.replace('client_chat_', '');
       const clientId = raw.startsWith('site-') ? raw : parseInt(raw, 10);
 
-      // 🔒 Перевірка доступності тільки тут
+      // 🔒 Перевірка доступності тільки для клієнтів з черги
       if (!waitingClients.has(clientId) && !waitingClients.has(String(clientId))) {
         await bot.sendMessage(managerId, "❌ Цей клієнт більше недоступний.");
         return;
@@ -1651,12 +1651,6 @@ async function startManagerChatWithClient(managerId, clientId) {
   const managerName = getManagerName(managerId);
 
   cleanupStaleStates();
-
-  // 🚫 Перевіряємо, чи клієнт ще в черзі
-  if (!waitingClients.has(clientId) && !waitingClients.has(String(clientId))) {
-    await bot.sendMessage(managerId, `❌ Цей клієнт (${clientId}) вже недоступний.`);
-    return;
-  }
 
   // Перевіряємо активний чат
   if (activeManagerChats[managerId]) {
@@ -3573,6 +3567,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
