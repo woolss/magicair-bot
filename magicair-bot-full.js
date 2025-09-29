@@ -1651,6 +1651,13 @@ async function startManagerChatWithClient(managerId, clientId) {
   const managerName = getManagerName(managerId);
 
   cleanupStaleStates();
+
+  // 🚫 Перевіряємо, чи клієнт ще в черзі
+  if (!waitingClients.has(clientId) && !waitingClients.has(String(clientId))) {
+    await bot.sendMessage(managerId, `❌ Цей клієнт (${clientId}) вже недоступний.`);
+    return;
+  }
+
   // Перевіряємо активний чат
   if (activeManagerChats[managerId]) {
     const currentClientId = activeManagerChats[managerId];
@@ -1737,7 +1744,6 @@ async function startManagerChatWithClient(managerId, clientId) {
     delete userStates[clientId];
   }
 }
-
 // --- ИСПРАВЛЕННАЯ функция для отправки информации о товарах (открывается в Telegram) ---
 async function sendProductInfo(chatId, messageId, title, description, url) {
   await bot.editMessageText(
@@ -3567,6 +3573,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
