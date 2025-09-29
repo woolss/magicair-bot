@@ -732,22 +732,28 @@ bot.on('message', async (msg) => {
     await bot.sendMessage(chatId, '⚠ Помилка. Спробуйте /start').catch(() => {});
   }
 });
+
 // ==================== ОБРОБКА КНОПОК INLINE ====================
 bot.on('callback_query', async (query) => {
-  const chatId = query.message.chat.id;
-  const userName = query.from.first_name || 'Клієнт';
+  const managerId = query.from.id; // менеджер = тот, кто нажал кнопку
   const data = query.data || query.message.text;
 
   try {
-    if (data.includes('client_chat_')) {
-      const clientId = data.replace('client_chat_', '');
-      activeManagerChats[chatId] = clientId;
-      await bot.sendMessage(chatId, `💬 Ви підключились до чату з клієнтом ${clientId}`);
-      await bot.sendMessage(clientId, "👨‍💼 Менеджер приєднався до чату.");
-    } else if (data === '✅ Відправити замовлення менеджеру') {
-      await finalizeAndSendOrder(chatId, userName);
+    if (data.startsWith('client_chat_')) {
+      const clientIdRaw = data.replace('client_chat_', '');
+      const clientId = clientIdRaw.startsWith('site-') ? clientIdRaw : parseInt(clientIdRaw, 10);
+
+      // Запускаем безопасное подключение
+      await startManagerChatWithClient(managerId, clientId);
+
+      await bot.answerCallbackQuery(query.id).catch(() => {});
+      return;
+    }
+
+    if (data === '✅ Відправити замовлення менеджеру') {
+      await finalizeAndSendOrder(managerId, query.from.first_name || 'Клієнт');
     } else if (data === '🏠 Головне меню') {
-      await bot.sendMessage(chatId, "📋 Головне меню:", mainMenu);
+      await bot.sendMessage(managerId, "📋 Головне меню:", mainMenu);
     }
   } catch (err) {
     console.error("⚠ callback_query error:", err);
@@ -755,6 +761,7 @@ bot.on('callback_query', async (query) => {
 
   await bot.answerCallbackQuery(query.id).catch(() => {});
 });
+
 // ==================== ЛОГИКА ОТСЛЕЖИВАННЯ І ФІНАЛІЗАЦІЇ ====================
 function initOrderTracking(chatId) {
   if (!userProfiles[chatId]) {
@@ -1640,8 +1647,14 @@ async function notifyManagers(clientId, userName, topic) { // ДОБАВЛЕНО
 
 async function startManagerChatWithClient(managerId, clientId) {
   const managerName = getManagerName(managerId);
-  
+
   cleanupStaleStates();
+
+  // 🔒 Захист: перевіряємо, чи клієнт ще доступний
+  if (!waitingClients.has(clientId) && !waitingClients.has(String(clientId))) {
+    await bot.sendMessage(managerId, "❌ Цей клієнт більше недоступний.");
+    return;
+  }
 
   // Перевіряємо активний чат
   if (activeManagerChats[managerId]) {
@@ -1680,12 +1693,6 @@ async function startManagerChatWithClient(managerId, clientId) {
     } catch (err) {
       console.log(`Не вдалося видалити повідомлення: ${err.message}`);
     }
-  }
-
-  // 🔒 Перевіряємо, що клієнт ще доступний
-  if (!waitingClients.has(clientId) && !waitingClients.has(String(clientId))) {
-    await bot.sendMessage(managerId, "❌ Цей клієнт більше недоступний.");
-    return;
   }
 
   // Встановлюємо зв'язок
@@ -3565,6 +3572,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
