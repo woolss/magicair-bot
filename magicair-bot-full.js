@@ -743,13 +743,13 @@ bot.on('callback_query', async (query) => {
       const raw = data.replace('client_chat_', '');
       const clientId = raw.startsWith('site-') ? raw : parseInt(raw, 10);
 
-      // 🔒 Перевірка доступності тільки для клієнтів з черги
+      // 🔒 Перевірка доступності ТІЛЬКИ для кнопок з черги
       if (!waitingClients.has(clientId) && !waitingClients.has(String(clientId))) {
         await bot.sendMessage(managerId, "❌ Цей клієнт більше недоступний.");
-        return;
+        return; // ⛔️ тут стоп, чат не запускається
       }
 
-      // 🚀 запускаем основную функцию
+      // 🚀 Якщо клієнт доступний – запускаємо чат
       await startManagerChatWithClient(managerId, clientId);
 
     } else if (data === '✅ Відправити замовлення менеджеру') {
@@ -1652,7 +1652,7 @@ async function startManagerChatWithClient(managerId, clientId) {
 
   cleanupStaleStates();
 
-  // Перевіряємо активний чат
+  // Перевіряємо активний чат у менеджера
   if (activeManagerChats[managerId]) {
     const currentClientId = activeManagerChats[managerId];
     
@@ -1660,7 +1660,7 @@ async function startManagerChatWithClient(managerId, clientId) {
       await bot.sendMessage(managerId, `ℹ️ Ви вже підключені до цього клієнта (${clientId}).`);
       return;
     }
-    
+
     await bot.sendMessage(managerId, 
       `⚠️ У вас активний чат з клієнтом ${currentClientId}.\n\n` +
       `Спочатку завершіть поточний чат кнопкою "🛑 Завершити чат", ` +
@@ -1669,7 +1669,7 @@ async function startManagerChatWithClient(managerId, clientId) {
     return;
   }
 
-  // Перевіряємо, не зайнятий чи клієнт іншим менеджером
+  // Перевіряємо, чи клієнт не зайнятий іншим менеджером
   for (const [otherManagerId, otherClientId] of Object.entries(activeManagerChats)) {
     if (otherClientId === clientId && otherManagerId !== managerId.toString()) {
       const otherManagerName = getManagerName(parseInt(otherManagerId));
@@ -1680,7 +1680,7 @@ async function startManagerChatWithClient(managerId, clientId) {
     }
   }
 
-  // 🔥 НОВЕ: Видаляємо повідомлення про нового клієнта
+  // Видаляємо повідомлення про нового клієнта
   if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
     try {
       await bot.deleteMessage(managerId, managerNotifications[managerId][clientId]);
@@ -1698,12 +1698,12 @@ async function startManagerChatWithClient(managerId, clientId) {
     managerId: managerId,
     startTime: Date.now()
   };
-  
+
   waitingClients.delete(clientId);
   waitingClients.delete(String(clientId));
 
   await bot.sendMessage(managerId, `✅ Ви підключені до клієнта (${clientId}).`);
-  
+
   // Повідомляємо клієнта
   try {
     if (String(clientId).startsWith('site-')) {
@@ -1711,7 +1711,6 @@ async function startManagerChatWithClient(managerId, clientId) {
         `👨‍💼 Менеджер ${managerName} підключився до чату!\n` +
         `Він готовий відповісти на ваші запитання.`
       );
-
       const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
       await sendToWebClient(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
       await logMessage(managerId, clientId, welcomeMessage, 'manager');
@@ -1721,23 +1720,21 @@ async function startManagerChatWithClient(managerId, clientId) {
         `Він готовий відповісти на ваші запитання.`, 
         clientInChatMenu
       );
-
       const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
       await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
       await logMessage(managerId, clientId, welcomeMessage, 'manager');
     }
-    
   } catch (error) {
     console.error(`Failed to notify client ${clientId}:`, error.message);
     await bot.sendMessage(managerId, 
       `⚠️ Не вдалося надіслати повідомлення клієнту ${clientId}.\n` +
       `Можливо, клієнт заблокував бота або видалив чат.`
     );
-
     delete activeManagerChats[managerId];
     delete userStates[clientId];
   }
 }
+
 // --- ИСПРАВЛЕННАЯ функция для отправки информации о товарах (открывается в Telegram) ---
 async function sendProductInfo(chatId, messageId, title, description, url) {
   await bot.editMessageText(
@@ -3567,6 +3564,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
