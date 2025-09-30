@@ -168,8 +168,13 @@ const holidays = [
 
 // Функция для очистки "зависших" состояний
 function cleanupStaleStates() {
-  console.log('🧹 Очистка зависших состояний...');
-  
+  // Логи убраны, только логика очистки
+  for (const [chatId, state] of Object.entries(userStates)) {
+    if (state.step === 'manager_chat' && !activeManagerChats[state.managerId]) {
+      delete userStates[chatId];
+    }
+  }
+}  
   // Проверяем все активные чаты менеджеров
   for (const [managerId, clientId] of Object.entries(activeManagerChats)) {
     // Если клиент не в состоянии manager_chat, удаляем связь
@@ -3735,6 +3740,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
