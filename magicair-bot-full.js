@@ -2368,29 +2368,32 @@ async function handleEndCommand(chatId) {
     const managerId = userStates[chatId].managerId;
     const managerName = getManagerName(managerId);
     
-    // 🔒 NEW: Ставим блокировку
-    managerLocks[managerId] = Date.now() + 2000;
+    // 🔒 Блокировка СРАЗУ и надолго
+    managerLocks[managerId] = Date.now() + 5000;
     setTimeout(() => {
       delete managerLocks[managerId];
-    }, 2500);
+    }, 5500);
     
-    // 🔥 ВАЖНО: Удаляем кнопку у менеджера независимо от того, кто завершил чат
+    // 🔥 СНАЧАЛА очищаем состояния (до удаления кнопки)
+    delete activeManagerChats[managerId];
+    delete userStates[chatId];
+    
+    // ТЕПЕРЬ удаляем кнопку
     await removeManagerNotificationButton(managerId, chatId);
     
-    // Очищаем связи
-    if (activeManagerChats[managerId] === chatId) {
-      delete activeManagerChats[managerId];
+    // Уведомляем менеджера
+    if (managerId) {
       await bot.sendMessage(managerId, `✅ Клієнт завершив чат.`, managerMenu);
     }
     
-    // Уведомляем клиента
+    // Уведомляем клиента (с правильным меню)
     if (String(chatId).startsWith('site-')) {
       await sendToWebClient(chatId, '✅ Чат завершено.');
     } else {
-      await bot.sendMessage(chatId, '✅ Чат завершено.', mainMenu);
+      await bot.sendMessage(chatId, '✅ Чат завершено. Повертаємось до головного меню.', mainMenu);
     }
     
-    delete userStates[chatId];
+    return; // Важно - прерываем выполнение
   } else if (isManager(chatId)) {
     // Менеджер завершает чат
     await endManagerChat(chatId);
@@ -2403,27 +2406,43 @@ async function handleEndCommand(chatId) {
 async function removeManagerNotificationButton(managerId, clientId) {
   if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
     const msgId = managerNotifications[managerId][clientId];
-    try {
-      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
-        chat_id: managerId,
-        message_id: msgId
-      });
-      console.log(`🗑️ Кнопка убрана у менеджера ${managerId} для клиента ${clientId}`);
-    } catch (err) {
-      console.log(`Не удалось отредактировать, пробуем удалить: ${err.message}`);
+    
+    // Пробуем 3 раза удалить кнопку
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await bot.deleteMessage(managerId, msgId);
-        console.log(`🗑️ Уведомление удалено у менеджера ${managerId}`);
-      } catch (err2) {
-        console.log(`Сообщение уже удалено или недоступно: ${err2.message}`);
+        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+          chat_id: managerId,
+          message_id: msgId
+        });
+        console.log(`🗑️ Кнопка убрана у менеджера ${managerId} для клиента ${clientId} (попытка ${attempt + 1})`);
+        break;
+      } catch (err) {
+        if (attempt < 2) {
+          await new Promise(resolve => setTimeout(resolve, 200)); // Короткая пауза
+        } else {
+          // Последняя попытка - удаляем само сообщение
+          try {
+            await bot.deleteMessage(managerId, msgId);
+            console.log(`🗑️ Сообщение полностью удалено`);
+          } catch (err2) {
+            console.log(`Не удалось удалить: ${err2.message}`);
+          }
+        }
       }
     }
+    
     delete managerNotifications[managerId][clientId];
   }
 }
 // ==================== ОБНОВЛЕННАЯ ФУНКЦИЯ ЗАВЕРШЕНИЯ ЧАТА МЕНЕДЖЕРОМ ====================
 async function endManagerChat(managerId) {
   const clientId = activeManagerChats[managerId];
+  
+  // 🔒 IMPORTANT: Ставим блокировку СРАЗУ, до любых других действий!
+  managerLocks[managerId] = Date.now() + 5000; // Увеличиваем до 5 секунд
+  setTimeout(() => {
+    delete managerLocks[managerId];
+  }, 5500);
   
   if (clientId) {
     const managerName = getManagerName(managerId);
@@ -2434,12 +2453,6 @@ async function endManagerChat(managerId) {
     // Очищаем состояния
     delete activeManagerChats[managerId];
     delete userStates[clientId];
-    
-    // 🔒 NEW: Ставим блокировку на 2 секунды
-    managerLocks[managerId] = Date.now() + 2000;
-    setTimeout(() => {
-      delete managerLocks[managerId];
-    }, 2500);
     
     // Уведомляем клиента
     try {
@@ -3672,6 +3685,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
