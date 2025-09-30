@@ -744,13 +744,17 @@ bot.on('callback_query', async (query) => {
       const raw = data.replace('client_chat_', '');
       const clientId = raw.startsWith('site-') ? raw : parseInt(raw, 10);
       
-      // 🔒 NEW: Проверка блокировки менеджера
+      // 🔒 Проверка блокировки менеджера
       if (managerLocks[managerId] && Date.now() < managerLocks[managerId]) {
+        // Мгновенно удаляем кнопку конкретного клиента из памяти
+        if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
+          delete managerNotifications[managerId][clientId];
+        }
+        
         await bot.answerCallbackQuery(query.id, {
           text: "⏳ Зачекайте, завершуємо попередній чат...",
           show_alert: true
-        });
-        
+        });      
         // Пытаемся сразу убрать кнопку
         try {
           await bot.editMessageReplyMarkup(
@@ -766,7 +770,32 @@ bot.on('callback_query', async (query) => {
         
         return; // Прекращаем обработку
       }
-      
+      // 🆕 НОВАЯ ПРОВЕРКА: Если кнопки уже нет в памяти - значит она удалена
+      if (!waitingClients.has(clientId) && !waitingClients.has(String(clientId))) {
+        // Дополнительная проверка через память уведомлений
+        const hasNotification = managerNotifications[managerId] && 
+                               managerNotifications[managerId][clientId];
+        
+        if (!hasNotification) {
+          await bot.answerCallbackQuery(query.id, {
+            text: "❌ Цей клієнт більше недоступний для чату",
+            show_alert: true
+          });
+          
+          // Убираем кнопку визуально
+          try {
+            await bot.editMessageReplyMarkup(
+              { inline_keyboard: [] },
+              { 
+                chat_id: managerId, 
+                message_id: query.message.message_id 
+              }
+            );
+          } catch (err) {}
+          
+          return;
+        }
+      }
       // 🔒 ИСПРАВЛЕННАЯ ПРОВЕРКА
       // Проверяем, находится ли клиент в очереди ожидания
       const isWaiting = waitingClients.has(clientId) || waitingClients.has(String(clientId));
@@ -1759,6 +1788,12 @@ async function notifyManagers(clientId, userName, topic) { // ДОБАВЛЕНО
 
 // ==================== ОБНОВЛЕННАЯ ФУНКЦИЯ СТАРТА ЧАТА ====================
 async function startManagerChatWithClient(managerId, clientId) {
+  // 🆕 Проверка блокировки прямо здесь (двойная защита)
+  if (managerLocks[managerId] && Date.now() < managerLocks[managerId]) {
+    console.log(`⛔ Менеджер ${managerId} заблокирован, не начинаем чат с ${clientId}`);
+    return;
+  }
+  
   const managerName = getManagerName(managerId);
 
   cleanupStaleStates();
@@ -2438,16 +2473,21 @@ async function removeManagerNotificationButton(managerId, clientId) {
 async function endManagerChat(managerId) {
   const clientId = activeManagerChats[managerId];
   
-  // 🔒 IMPORTANT: Ставим блокировку СРАЗУ, до любых других действий!
-  managerLocks[managerId] = Date.now() + 5000; // Увеличиваем до 5 секунд
+  // 🔒 Блокировка на 10 секунд
+  managerLocks[managerId] = Date.now() + 10000;
   setTimeout(() => {
     delete managerLocks[managerId];
-  }, 5500);
+  }, 10500);
   
   if (clientId) {
+    // 🚨 Удаляем ТОЛЬКО кнопку текущего клиента из памяти СРАЗУ
+    if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
+      delete managerNotifications[managerId][clientId];
+    }
+    
     const managerName = getManagerName(managerId);
     
-    // 🔥 ВСЕГДА удаляем кнопку при завершении чата
+    // Теперь удаляем кнопку визуально
     await removeManagerNotificationButton(managerId, clientId);
     
     // Очищаем состояния
@@ -3685,6 +3725,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
