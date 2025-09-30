@@ -858,21 +858,19 @@ bot.on('callback_query', async (query) => {
       await bot.answerCallbackQuery(query.id);
       
     } else if (data.startsWith('history_chat_')) {
-      // 🆕 НОВЫЙ ОБРАБОТЧИК ДЛЯ ЧАТА ИЗ ИСТОРИИ
-      const clientId = parseInt(data.replace('history_chat_', ''));
-      
-      // Проверяем только активный чат менеджера
-      if (activeManagerChats[managerId] && activeManagerChats[managerId] !== clientId) {
-        await bot.answerCallbackQuery(query.id, {
-          text: "⚠️ Завершіть поточний чат перед початком нового",
-          show_alert: true
-        });
-        return;
-      }
-      
-      // Запускаем чат БЕЗ проверки очереди
-      await startManagerChatWithClient(managerId, clientId);
-      await bot.answerCallbackQuery(query.id);
+  const clientId = parseInt(data.replace('history_chat_', ''));
+  
+  if (activeManagerChats[managerId] && activeManagerChats[managerId] !== clientId) {
+    await bot.answerCallbackQuery(query.id, {
+      text: "⚠️ Завершіть поточний чат перед початком нового",
+      show_alert: true
+    });
+    return;
+  }
+  
+  // Передаємо параметр fromHistory = true
+  await startManagerChatWithClient(managerId, clientId, true);
+  await bot.answerCallbackQuery(query.id);
       
     } else if (data.startsWith('show_history_')) {
       // Для истории - разрешаем всегда
@@ -1787,7 +1785,7 @@ async function notifyManagers(clientId, userName, topic) { // ДОБАВЛЕНО
 }
 
 // ==================== ОБНОВЛЕННАЯ ФУНКЦИЯ СТАРТА ЧАТА ====================
-async function startManagerChatWithClient(managerId, clientId) {
+async function startManagerChatWithClient(managerId, clientId, fromHistory = false) {
   // 🆕 Проверка блокировки прямо здесь (двойная защита)
   if (managerLocks[managerId] && Date.now() < managerLocks[managerId]) {
     console.log(`⛔ Менеджер ${managerId} заблокирован, не начинаем чат с ${clientId}`);
@@ -1843,25 +1841,37 @@ async function startManagerChatWithClient(managerId, clientId) {
   await bot.sendMessage(managerId, `✅ Ви підключені до клієнта (${clientId}).`);
 
   // Повідомляємо клієнта
-  try {
-    if (String(clientId).startsWith('site-')) {
-      await sendToWebClient(clientId, 
-        `👨‍💼 Менеджер ${managerName} підключився до чату!\n` +
-        `Він готовий відповісти на ваші запитання.`
-      );
+  // Повідомляємо клієнта
+try {
+  if (String(clientId).startsWith('site-')) {
+    // Різні повідомлення для історії та черги
+    const notificationText = fromHistory
+      ? `👨‍💼 Менеджер ${managerName} підключився до чату!`
+      : `👨‍💼 Менеджер ${managerName} підключився до чату!\nВін готовий відповісти на ваші запитання.`;
+    
+    await sendToWebClient(clientId, notificationText);
+    
+    // Привітання ТІЛЬКИ якщо НЕ з історії
+    if (!fromHistory) {
       const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
       await sendToWebClient(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
       await logMessage(managerId, clientId, welcomeMessage, 'manager');
-    } else {
-      await bot.sendMessage(clientId, 
-        `👨‍💼 Менеджер ${managerName} підключився до чату!\n` +
-        `Він готовий відповісти на ваші запитання.`, 
-        clientInChatMenu  // Використовуємо спецменю
-      );
+    }
+  } else {
+    // Різні повідомлення для історії та черги
+    const notificationText = fromHistory
+      ? `👨‍💼 Менеджер ${managerName} підключився до чату!`
+      : `👨‍💼 Менеджер ${managerName} підключився до чату!\nВін готовий відповісти на ваші запитання.`;
+    
+    await bot.sendMessage(clientId, notificationText, clientInChatMenu);
+    
+    // Привітання ТІЛЬКИ якщо НЕ з історії
+    if (!fromHistory) {
       const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
       await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
       await logMessage(managerId, clientId, welcomeMessage, 'manager');
     }
+  }
   } catch (error) {
     console.error(`Failed to notify client ${clientId}:`, error.message);
     await bot.sendMessage(managerId, 
@@ -3725,6 +3735,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
