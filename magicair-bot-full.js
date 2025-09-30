@@ -166,20 +166,24 @@ const holidays = [
   { date: '31.10', name: 'Хелловін', emoji: '🎃' }
 ];
 
-// Функция для очистки "зависших" состояний
+// Функция для очистки "зависших" состояний 
 function cleanupStaleStates() {
-  // Логи убраны, только логика очистки
+  // Логи убраны, только логика очистки (без спама в консоль)
   for (const [chatId, state] of Object.entries(userStates)) {
     if (state.step === 'manager_chat' && !activeManagerChats[state.managerId]) {
       delete userStates[chatId];
     }
   }
-}  
+
   // Проверяем все активные чаты менеджеров
   for (const [managerId, clientId] of Object.entries(activeManagerChats)) {
     // Если клиент не в состоянии manager_chat, удаляем связь
-    if (!userStates[clientId] || userStates[clientId].step !== 'manager_chat' || userStates[clientId].managerId !== parseInt(managerId)) {
-      console.log(`🗑 Удаляем зависший чат: менеджер ${managerId} - клиент ${clientId}`);
+    if (
+      !userStates[clientId] ||
+      userStates[clientId].step !== 'manager_chat' ||
+      userStates[clientId].managerId !== parseInt(managerId)
+    ) {
+      // console.log(`🗑 Удаляем зависший чат: менеджер ${managerId} - клиент ${clientId}`);
       delete activeManagerChats[managerId];
     }
   }
@@ -190,13 +194,13 @@ function cleanupStaleStates() {
       const managerId = state.managerId;
       // Если менеджер не связан с этим клиентом, очищаем состояние клиента
       if (!managerId || activeManagerChats[managerId] !== clientId) {
-        console.log(`🗑 Удаляем зависшее состояние клиента ${clientId}`);
+        // console.log(`🗑 Удаляем зависшее состояние клиента ${clientId}`);
         delete userStates[clientId];
       }
     }
   }
-  
-  console.log('✅ Очистка завершена');
+
+  // console.log('✅ Очистка завершена'); // убрал спам
 }
 
 // ДОБАВИТЬ автоочистку каждые 10 минут
@@ -3740,6 +3744,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
