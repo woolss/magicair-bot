@@ -157,6 +157,7 @@ const activeManagerChats = {};
 const messageLog = [];
 const userProfiles = {};
 const activePromotions = [];
+const managerLocks = {}; // 🔒 NEW: Временная блокировка менеджеров после завершения чата
 const holidays = [
   { date: '14.02', name: 'День Святого Валентина', emoji: '💕' },
   { date: '08.03', name: 'Міжнародний жіночий день', emoji: '🌸' },
@@ -742,6 +743,29 @@ bot.on('callback_query', async (query) => {
     if (data.startsWith('client_chat_')) {
       const raw = data.replace('client_chat_', '');
       const clientId = raw.startsWith('site-') ? raw : parseInt(raw, 10);
+      
+      // 🔒 NEW: Проверка блокировки менеджера
+      if (managerLocks[managerId] && Date.now() < managerLocks[managerId]) {
+        await bot.answerCallbackQuery(query.id, {
+          text: "⏳ Зачекайте, завершуємо попередній чат...",
+          show_alert: true
+        });
+        
+        // Пытаемся сразу убрать кнопку
+        try {
+          await bot.editMessageReplyMarkup(
+            { inline_keyboard: [] },
+            { 
+              chat_id: managerId, 
+              message_id: query.message.message_id 
+            }
+          );
+        } catch (err) {
+          // Игнорируем ошибку
+        }
+        
+        return; // Прекращаем обработку
+      }
       
       // 🔒 ИСПРАВЛЕННАЯ ПРОВЕРКА
       // Проверяем, находится ли клиент в очереди ожидания
@@ -2344,6 +2368,12 @@ async function handleEndCommand(chatId) {
     const managerId = userStates[chatId].managerId;
     const managerName = getManagerName(managerId);
     
+    // 🔒 NEW: Ставим блокировку
+    managerLocks[managerId] = Date.now() + 2000;
+    setTimeout(() => {
+      delete managerLocks[managerId];
+    }, 2500);
+    
     // 🔥 ВАЖНО: Удаляем кнопку у менеджера независимо от того, кто завершил чат
     await removeManagerNotificationButton(managerId, chatId);
     
@@ -2404,6 +2434,12 @@ async function endManagerChat(managerId) {
     // Очищаем состояния
     delete activeManagerChats[managerId];
     delete userStates[clientId];
+    
+    // 🔒 NEW: Ставим блокировку на 2 секунды
+    managerLocks[managerId] = Date.now() + 2000;
+    setTimeout(() => {
+      delete managerLocks[managerId];
+    }, 2500);
     
     // Уведомляем клиента
     try {
@@ -3636,6 +3672,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
