@@ -3099,7 +3099,6 @@ const systemPrompt = `
      // ===>> НОВИЙ КОД ДЛЯ ЛОГУВАННЯ <<===
      console.log('🤖 AI-помічник:\n' + aiResponse);
      
-    // ===>> ИСПРАВЛЕННЫЙ БЛОК <<===
 // Проверяем, нужно ли добавлять предложение обратиться к менеджеру
 const isSimpleGreeting = /^(привіт|привет|добрий|вітаю|здрав)/i.test(text.toLowerCase());
 const isGeneralQuestion = aiResponse.includes('ціна') || aiResponse.includes('доставка') || aiResponse.includes('замовлення') || aiResponse.length > 150;
@@ -3130,9 +3129,9 @@ await bot.sendMessage(chatId, finalResponseText, options);
       historyData.messages.push(sanitizedText);
       historyData.lastUpdate = Date.now(); // Оновлюємо timestamp
       
-      if (historyData.messages.length > 5) {
-        historyData.messages.shift(); // Видаляємо найстаріше, залишаємо тільки останні 5
-      }      
+      if (historyData.messages.length > 10) {
+        historyData.messages = historyData.messages.slice(-10);
+     }   
       return;
 
     } catch (error) {
@@ -3834,6 +3833,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
