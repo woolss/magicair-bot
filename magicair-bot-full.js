@@ -2924,10 +2924,11 @@ async function handleGeneralMessage(chatId, text, userName) {
     const userProfile = userProfiles[chatId] || {};
     const now = Date.now();
     const lastActivity = userProfile.lastActivity || 0;
-    const timeSinceLastMessage = now - lastActivity;
+    const timeSinceLastActivity = now - lastActivity; // 🆕 новое имя
 
     const greetingThreshold = 5 * 60 * 60 * 1000; // 5 часов в миллисекундах
-    const shouldGreet = timeSinceLastMessage > greetingThreshold;
+    const shouldGreet = timeSinceLastActivity > greetingThreshold; // заменено
+
     
     // Перевіряємо, чи містить повідомлення привітання
     const greetingWords = ['привіт', 'привет', 'добрий день', 'добрий ранок', 'добрий вечір', 'здравствуйте', 'вітаю', 'доброго дня', 'добрый день', 'добрый вечер'];
@@ -2937,6 +2938,7 @@ async function handleGeneralMessage(chatId, text, userName) {
     
     // Визначаємо, чи потрібно привітатись
     const shouldRespondWithGreeting = shouldGreet || messageContainsGreeting;
+
     
    // 🆕 ДОДАНО: Ініціалізуємо історію розмов для цього клієнта
     if (!userConversationHistory[chatId]) {
@@ -3808,6 +3810,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
