@@ -157,7 +157,8 @@ const activeManagerChats = {};
 const messageLog = [];
 const userProfiles = {};
 const activePromotions = [];
-const managerLocks = {}; // 🔒 NEW: Временная блокировка менеджеров после завершения чата
+const managerLocks = {};
+const userConversationHistory = {}; // 🆕 Зберігаємо історію розмов для AI
 const holidays = [
   { date: '14.02', name: 'День Святого Валентина', emoji: '💕' },
   { date: '08.03', name: 'Міжнародний жіночий день', emoji: '🌸' },
@@ -2906,7 +2907,7 @@ async function handleEventFilter(chatId, messageId) {
 
 // ========== НОВАЯ ФУНКЦИЯ ДЛЯ УМНЫХ ОТВЕТОВ AI ==========
 async function handleGeneralMessage(chatId, text, userName) {
-  // Санитизация входящего текста
+  // Санитизація вхідного тексту
   const sanitizedText = sanitizeMessage(text);
   const sanitizedUserName = sanitizeMessage(userName);
   
@@ -2915,10 +2916,10 @@ async function handleGeneralMessage(chatId, text, userName) {
     return;
   }
   
-  // Эта функция будет вызываться, когда клиент отправляет любой текст,
-  // который не является командой или частью диалога с менеджером.
+  // Ця функція буде викликатись, коли клієнт відправляє любий текст,
+  // який не є командою або частью діалогу з менеджером.
 
-  // 1. Проверяем, есть ли подключение к OpenAI
+  // 1. Перевіряємо, чи є підключення до OpenAI
   if (openai) {
     const userProfile = userProfiles[chatId] || {};
     const now = Date.now();
@@ -2928,14 +2929,31 @@ async function handleGeneralMessage(chatId, text, userName) {
     const greetingThreshold = 5 * 60 * 60 * 1000; // 5 часов в миллисекундах
     const shouldGreet = timeSinceLastMessage > greetingThreshold;
     
-    // Проверяем, содержит ли сообщение приветствие
+    // Перевіряємо, чи містить повідомлення привітання
     const greetingWords = ['привіт', 'привет', 'добрий день', 'добрий ранок', 'добрий вечір', 'здравствуйте', 'вітаю', 'доброго дня', 'добрый день', 'добрый вечер'];
     const messageContainsGreeting = greetingWords.some(word =>
       sanitizedText.toLowerCase().includes(word)
     );
     
-    // Определяем, нужно ли приветствовать
+    // Визначаємо, чи потрібно привітатись
     const shouldRespondWithGreeting = shouldGreet || messageContainsGreeting;
+    
+   // 🆕 ДОДАНО: Ініціалізуємо історію розмов для цього клієнта
+    if (!userConversationHistory[chatId]) {
+      userConversationHistory[chatId] = {
+        messages: [],
+        lastUpdate: Date.now()
+      };
+    }
+    
+    // Очищаємо історію, якщо минуло більше 24 годин
+    const timeSinceLastMessage = Date.now() - userConversationHistory[chatId].lastUpdate;
+    const ONE_DAY = 24 * 60 * 60 * 1000;
+    
+    if (timeSinceLastMessage > ONE_DAY) {
+      console.log(`🧹 Очищено історію для клієнта ${chatId} (неактивний ${Math.floor(timeSinceLastMessage / 1000 / 60 / 60)} год)`);
+      userConversationHistory[chatId].messages = [];
+    }
     
  // 2. Створюємо промпт з інструкціями для AI
 const systemPrompt = `
@@ -2944,6 +2962,16 @@ const systemPrompt = `
 Ніколи не вигадуй ціни чи інформацію, якщо їх немає в <data>.  
 Ти чудово розумієш запитання українською та російською, але завжди відповідаєш українською.  
 Твої відповіді мають бути лаконічними, дружніми й орієнтованими на допомогу у виборі кульок чи оформленні замовлення.
+
+<personality>
+Твоя манера спілкування:
+- Дружня, тепла, але професійна — як досвідчений консультант у магазині гелієвих кульок
+- Використовуй емодзі для створення святкової атмосфери (але не більше 2 на відповідь)
+- Стався до клієнта як до друга, якому хочеш створити незабутнє свято
+- Якщо клієнт обирає кульки для дитини — покажи особливу теплоту 🎈
+- Якщо для романтичного сюрпризу — додай чуйності 💝
+- Будь уважним до емоцій: якщо клієнт радісний — поділи радість, якщо розгублений — заспокой
+</personality>
 
 <rules>
 1.  **Стиль спілкування:** Будь лаконічним і дружнім. Твоя мова — проста і зрозуміла.
@@ -3017,16 +3045,28 @@ const systemPrompt = `
     userProfiles[chatId].lastActivity = now;
     
     try {
-      // 3. Отправляем промпт и вопрос клиента в OpenAI
+     // 🆕 ДОДАНО: Формуємо контекст з історії розмови
+      const conversationContext = [];
+      const historyData = userConversationHistory[chatId];
+      const messages = historyData.messages;
+      
+      if (messages.length > 0) {
+        conversationContext.push({
+          role: "system",
+          content: `Контекст попередніх повідомлень клієнта (для розуміння діалогу):\n${messages.map((h, i) => `${i + 1}. Клієнт: "${h}"`).join('\n')}`
+        });
+      }
+      
+      // 3. Відправляємо промпт і вопрос клієнта в OpenAI
       const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           { role: "system", content: systemPrompt },
+          ...conversationContext, // 🆕 Додаємо історію
           { role: "user", content: sanitizedText }
         ]
       });
-      
-      
+            
       // 4. Получаем ответ от AI и отправляем с пометкой
       const aiResponse = completion.choices[0].message.content;
 
@@ -3059,12 +3099,18 @@ const options = {
 };
 
 await bot.sendMessage(chatId, finalResponseText, options);
-      // ===>> КОНЕЦ ИСПРАВЛЕННОГО БЛОКА <<===
-      
-      return;
 
-    } catch (error) {
-      console.error('⚠️ Помилка OpenAI:', error);
+     // 🆕 ДОДАНО: Зберігаємо повідомлення клієнта в історію
+      historyData.messages.push(sanitizedText);
+      historyData.lastUpdate = Date.now(); // Оновлюємо timestamp
+      
+      if (historyData.messages.length > 5) {
+        historyData.messages.shift(); // Видаляємо найстаріше, залишаємо тільки останні 5
+      }      
+      return;
+
+    } catch (error) {
+      console.error('⚠️ Помилка OpenAI:', error);
       // Если возникла ошибка, переходим к стандартному сообщению
     }
   }
@@ -3687,7 +3733,7 @@ async function startBot() {
     
     scheduleNextCheck();
     
-    // ОЧИСТКА АКЦИЙ - РАЗ В СУТКИ В ПОЛНОЧЬ
+   // ОЧИСТКА АКЦИЙ - РАЗ в сутки в полночь
     setInterval(async () => {
       const now = new Date();
       now.setHours(0, 0, 0, 0);
@@ -3707,12 +3753,30 @@ async function startBot() {
       if (filtered.length !== oldCount) {
         activePromotions.length = 0;
         activePromotions.push(...filtered);
-        console.log(`🗑 Очищено ${oldCount - filtered.length} старых акций`);
+        console.log(`🗑 Очищено ${oldCount - filtered.length} старих акцій`);
         await saveData();
       }
     }, 24 * 60 * 60 * 1000);
     
-    console.log('✅ MagicAir бот запущено с PostgreSQL!');
+    // 🆕 ДОДАНО: АВТООЧИСТКА ІСТОРІЙ AI - РАЗ НА ДОБУ
+    setInterval(() => {
+      const now = Date.now();
+      const ONE_DAY = 24 * 60 * 60 * 1000;
+      let cleaned = 0;
+      
+      for (const [chatId, historyData] of Object.entries(userConversationHistory)) {
+        if (now - historyData.lastUpdate > ONE_DAY) {
+          delete userConversationHistory[chatId];
+          cleaned++;
+        }
+      }
+      
+      if (cleaned > 0) {
+        console.log(`🧹 Глобальна очистка: видалено ${cleaned} старих історій AI`);
+      }
+    }, 24 * 60 * 60 * 1000);
+    
+    console.log('✅ MagicAir бот запущено з PostgreSQL!');
     console.log(`📊 Загружено: ${Object.keys(userProfiles).length} профилей, ${activePromotions.length} акций`);
     
   } catch (error) {
@@ -3744,6 +3808,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
