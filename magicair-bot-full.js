@@ -720,18 +720,17 @@ bot.on('message', async (msg) => {
   await handleManagerMessage(msg);
 } else {
 
-  // 🟢 НОВА ПРОВЕРКА: якщо клієнт зараз у чаті з менеджером
-  if (userStates[chatId]?.step === 'manager_chat') {
-    const managerId = userStates[chatId].managerId;
-    if (managerId && activeManagerChats[managerId] === chatId) {
-      // Пересилаем текст клиент → менеджеру
-      await bot.sendMessage(managerId, `💬 ${userName} (${chatId}): ${msg.text}`);
-      await logMessage(chatId, managerId, msg.text, 'client');
-      console.log(`💬 Повідомлення від ${chatId} переслано менеджеру ${managerId}`);
-      return; // ⚠️ Не передаємо в AI і не створюємо нове замовлення
-    }
-  }
+  // 🟢 Універсальна перевірка: якщо клієнт зараз у чаті з менеджером
+const managerId = Object.keys(activeManagerChats).find(
+  mId => activeManagerChats[mId] == chatId
+);
 
+if (managerId) {
+  await bot.sendMessage(managerId, `💬 ${userName} (${chatId}): ${msg.text}`);
+  await logMessage(chatId, managerId, msg.text, 'client');
+  console.log(`💬 Повідомлення від ${chatId} переслано менеджеру ${managerId}`);
+  return; // ⚠️ Не передаємо в AI і не створюємо нове замовлення
+}
   // Якщо менеджер ще не підключився
   if (userStates[chatId]?.step !== 'manager_chat') {
     const lastOrderTime = userProfiles[chatId]?.lastOrderTime;
@@ -3767,6 +3766,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
