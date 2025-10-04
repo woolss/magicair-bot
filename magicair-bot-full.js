@@ -647,7 +647,7 @@ bot.on('message', async (msg) => {
   const userName = msg.from.first_name || 'Клієнт';
   const text = msg.text || '';
 
-  // 🚫 Антиспам-перевірка
+  // 🚫 Антиспам
   const rateStatus = checkRateLimit(chatId);
   if (!rateStatus.allowed) {
     await bot.sendMessage(
@@ -657,9 +657,8 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // Якщо є фото → спеціальна обробка
+  // 🖼 Фото
   if (msg.photo) {
-    // 🟢 Якщо клієнт зараз у чаті з менеджером — просто пересилаємо фото
     const managerId = Object.keys(activeManagerChats).find(
       mId => activeManagerChats[mId] == chatId
     );
@@ -667,18 +666,19 @@ bot.on('message', async (msg) => {
     const caption = msg.caption || '';
 
     if (managerId) {
+      // Якщо клієнт у чаті з менеджером → пересилаємо фото
       await bot.sendPhoto(managerId, fileId, {
         caption: `📷 ${userName} (${chatId}):\n${caption || '(без коментаря)'}`
       });
       await logMessage(chatId, managerId, `[ФОТО] ${caption}`, 'client');
-      return; // ⚠️ Не створюємо замовлення
+      return;
     }
 
-    // 🔄 Інакше — це нове фото-замовлення
+    // Інакше — нове фото-замовлення
     return await handlePhotoMessage(msg);
   }
 
-  // Обробка команд
+  // ⚙️ Команди
   if (text && text.startsWith('/')) {
     if (text === '/end') {
       await handleEndCommand(chatId);
@@ -689,18 +689,19 @@ bot.on('message', async (msg) => {
   console.log(`📨 ${chatId} (${userName}): ${text}`);
 
   try {
+    // 👨‍💼 Якщо це менеджер
     if (isManager(chatId)) {
       await handleManagerMessage(msg);
       return;
     }
 
-    // 🟢 Якщо клієнт зараз у чаті з менеджером
+    // 💬 Якщо клієнт зараз у чаті з менеджером
     const managerId = Object.keys(activeManagerChats).find(
       mId => activeManagerChats[mId] == chatId
     );
 
     if (managerId) {
-      // 🏠 Якщо клієнт натиснув "Головне меню" → завершуємо чат
+      // 🏠 Кнопка "Головне меню" → завершення чату
       if (text === '🏠 Головне меню') {
         delete activeManagerChats[managerId];
         delete userStates[chatId];
@@ -718,11 +719,11 @@ bot.on('message', async (msg) => {
         return;
       }
 
-      // 🔁 Інакше — просто пересилаємо менеджеру
+      // 🔁 Пересилання повідомлення менеджеру
       await bot.sendMessage(managerId, `💬 ${userName} (${chatId}): ${text}`);
       await logMessage(chatId, managerId, text, 'client');
       console.log(`💬 Повідомлення від ${chatId} переслано менеджеру ${managerId}`);
-      return; // ⚠️ Не передаємо в AI і не створюємо нове замовлення
+      return;
     }
 
     // 🧩 Якщо менеджер ще не підключився
@@ -737,7 +738,7 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // 🔚 Усі інші повідомлення → AI або створення замовлення
+    // 🧠 Усі інші повідомлення → AI / створення нового замовлення
     await handleClientMessage(msg);
 
   } catch (error) {
@@ -3700,6 +3701,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
