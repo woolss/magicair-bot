@@ -156,6 +156,7 @@ const waitingClients = new Set();
 const activeManagerChats = {};
 const messageLog = [];
 const userProfiles = {};
+const managerLocks = {};
 const activePromotions = [];
 const userConversationHistory = {}; // 🆕 Зберігаємо історію розмов для AI
 const holidays = [
@@ -3766,6 +3767,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
