@@ -157,7 +157,6 @@ const activeManagerChats = {};
 const messageLog = [];
 const userProfiles = {};
 const activePromotions = [];
-const managerLocks = {};
 const userConversationHistory = {}; // 🆕 Зберігаємо історію розмов для AI
 const holidays = [
   { date: '14.02', name: 'День Святого Валентина', emoji: '💕' },
@@ -716,28 +715,39 @@ bot.on('message', async (msg) => {
   console.log(`📨 ${chatId} (${userName}): ${text}`);
 
   try {
-    if (isManager(chatId)) {
-      await handleManagerMessage(msg);
-    } else {
-      // Якщо менеджер ще не підключився
-      if (userStates[chatId]?.step !== 'manager_chat') {
-        const lastOrderTime = userProfiles[chatId]?.lastOrderTime;
-        if (userProfiles[chatId]?.pendingPhotoOrder) {
-  // Если это служебная кнопка — не перехватываем, пусть дойдёт до handleClientMessage
-  if (text !== '✅ Відправити замовлення менеджеру' && text !== '🏠 Головне меню') {
-    await handlePhotoClarification(chatId, text, userName);
-    return;
-  }
-} else if (lastOrderTime && Date.now() - lastOrderTime < 60 * 1000) {
-  // ⏳ якщо пройшло < 1 хвилини — трактуємо як уточнення
-  await handleOrderClarification(chatId, text, userName);
-  return;
-}
+   if (isManager(chatId)) {
+  await handleManagerMessage(msg);
+} else {
 
-      }
-      // все інше → як звичайне повідомлення
-      await handleClientMessage(msg);
+  // 🟢 НОВА ПРОВЕРКА: якщо клієнт зараз у чаті з менеджером
+  if (userStates[chatId]?.step === 'manager_chat') {
+    const managerId = userStates[chatId].managerId;
+    if (managerId && activeManagerChats[managerId] === chatId) {
+      // Пересилаем текст клиент → менеджеру
+      await bot.sendMessage(managerId, `💬 ${userName} (${chatId}): ${msg.text}`);
+      await logMessage(chatId, managerId, msg.text, 'client');
+      console.log(`💬 Повідомлення від ${chatId} переслано менеджеру ${managerId}`);
+      return; // ⚠️ Не передаємо в AI і не створюємо нове замовлення
     }
+  }
+
+  // Якщо менеджер ще не підключився
+  if (userStates[chatId]?.step !== 'manager_chat') {
+    const lastOrderTime = userProfiles[chatId]?.lastOrderTime;
+    if (userProfiles[chatId]?.pendingPhotoOrder) {
+      if (text !== '✅ Відправити замовлення менеджеру' && text !== '🏠 Головне меню') {
+        await handlePhotoClarification(chatId, text, userName);
+        return;
+      }
+    } else if (lastOrderTime && Date.now() - lastOrderTime < 60 * 1000) {
+      await handleOrderClarification(chatId, text, userName);
+      return;
+    }
+  }
+
+  // все інше → як звичайне повідомлення
+  await handleClientMessage(msg);
+}
   } catch (error) {
     console.error('⚠ Message error:', error);
     await bot.sendMessage(chatId, '⚠ Помилка. Спробуйте /start').catch(() => {});
@@ -748,99 +758,60 @@ bot.on('message', async (msg) => {
 bot.on('callback_query', async (query) => {
   const managerId = query.from.id;
   const data = query.data || '';
-  
+
   try {
+    // ========== 🟢 Менеджер починає чат з клієнтом ==========
     if (data.startsWith('client_chat_')) {
       const raw = data.replace('client_chat_', '');
       const clientId = raw.startsWith('site-') ? raw : parseInt(raw, 10);
-      
-      // 🔒 Проверка блокировки менеджера
-      if (managerLocks[managerId] && Date.now() < managerLocks[managerId]) {
-        // Мгновенно удаляем кнопку конкретного клиента из памяти
-        if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
-          delete managerNotifications[managerId][clientId];
-        }
-        
-        await bot.answerCallbackQuery(query.id, {
-          text: "⏳ Зачекайте, завершуємо попередній чат...",
-          show_alert: true
-        });      
-        // Пытаемся сразу убрать кнопку
-        try {
-          await bot.editMessageReplyMarkup(
-            { inline_keyboard: [] },
-            { 
-              chat_id: managerId, 
-              message_id: query.message.message_id 
-            }
-          );
-        } catch (err) {
-          // Игнорируем ошибку
-        }
-        
-        return; // Прекращаем обработку
-      }
-      // 🆕 НОВАЯ ПРОВЕРКА: Если кнопки уже нет в памяти - значит она удалена
+
+      // 🟢 Убрана проверка блокировки managerLocks
+      // (Теперь менеджер не блокируется, всё реагирует мгновенно)
+
+      // 🆕 Проверяем, доступен ли клиент вообще
       if (!waitingClients.has(clientId) && !waitingClients.has(String(clientId))) {
-        // Дополнительная проверка через память уведомлений
         const hasNotification = managerNotifications[managerId] && 
-                               managerNotifications[managerId][clientId];
-        
+                                managerNotifications[managerId][clientId];
         if (!hasNotification) {
           await bot.answerCallbackQuery(query.id, {
             text: "❌ Цей клієнт більше недоступний для чату",
             show_alert: true
           });
-          
-          // Убираем кнопку визуально
+
+          // Удаляем неактуальную кнопку
           try {
             await bot.editMessageReplyMarkup(
               { inline_keyboard: [] },
-              { 
-                chat_id: managerId, 
-                message_id: query.message.message_id 
-              }
+              { chat_id: managerId, message_id: query.message.message_id }
             );
           } catch (err) {}
-          
           return;
         }
       }
-      // 🔒 ИСПРАВЛЕННАЯ ПРОВЕРКА
-      // Проверяем, находится ли клиент в очереди ожидания
+
+      // 🔍 Проверяем статусы клиента и менеджера
       const isWaiting = waitingClients.has(clientId) || waitingClients.has(String(clientId));
-      
-      // Проверяем, не занят ли клиент другим менеджером
-      const isOccupied = Object.values(activeManagerChats).some(id => 
+      const isOccupied = Object.values(activeManagerChats).some(id =>
         id === clientId || id === String(clientId)
       );
-      
-      // Проверяем, есть ли у текущего менеджера активный чат
       const hasActiveChat = activeManagerChats[managerId] !== undefined;
-      
+
       if (!isWaiting && !isOccupied) {
-        // Клиент НЕ в очереди и НЕ занят - блокируем
         await bot.answerCallbackQuery(query.id, {
           text: "❌ Цей клієнт більше недоступний для чату",
           show_alert: true
         });
-        
-        // Удаляем кнопку из старого сообщения
         try {
           await bot.editMessageReplyMarkup(
             { inline_keyboard: [] },
-            { 
-              chat_id: managerId, 
-              message_id: query.message.message_id 
-            }
+            { chat_id: managerId, message_id: query.message.message_id }
           );
         } catch (err) {
-          console.log("Не удалось убрать кнопку:", err.message);
+          console.log("Не вдалося прибрати кнопку:", err.message);
         }
-        
-        return; // ⛔️ ВАЖНО - выходим, не начиная чат
+        return;
       }
-      
+
       if (hasActiveChat && activeManagerChats[managerId] !== clientId) {
         await bot.answerCallbackQuery(query.id, {
           text: "⚠️ Завершіть поточний чат перед початком нового",
@@ -848,11 +819,11 @@ bot.on('callback_query', async (query) => {
         });
         return;
       }
-      
+
       if (isOccupied && !activeManagerChats[managerId]) {
         const occupiedBy = Object.entries(activeManagerChats)
           .find(([_, cId]) => cId === clientId || cId === String(clientId));
-        
+
         if (occupiedBy) {
           const otherManagerName = getManagerName(parseInt(occupiedBy[0]));
           await bot.answerCallbackQuery(query.id, {
@@ -862,43 +833,47 @@ bot.on('callback_query', async (query) => {
           return;
         }
       }
-      
-      // 🚀 Запускаем чат ТОЛЬКО если все проверки пройдены
+
+      // 🚀 Всё в порядке — запускаем чат
       await startManagerChatWithClient(managerId, clientId);
       await bot.answerCallbackQuery(query.id);
-      
-    } else if (data.startsWith('history_chat_')) {
-  const clientId = parseInt(data.replace('history_chat_', ''));
-  
-  if (activeManagerChats[managerId] && activeManagerChats[managerId] !== clientId) {
-    await bot.answerCallbackQuery(query.id, {
-      text: "⚠️ Завершіть поточний чат перед початком нового",
-      show_alert: true
-    });
-    return;
-  }
-  
-  // Передаємо параметр fromHistory = true
-  await startManagerChatWithClient(managerId, clientId, true);
-  await bot.answerCallbackQuery(query.id);
-      
-    } else if (data.startsWith('show_history_')) {
-      // Для истории - разрешаем всегда
+    }
+
+    // ========== 🕓 Історія чатів ==========
+    else if (data.startsWith('history_chat_')) {
+      const clientId = parseInt(data.replace('history_chat_', ''));
+      if (activeManagerChats[managerId] && activeManagerChats[managerId] !== clientId) {
+        await bot.answerCallbackQuery(query.id, {
+          text: "⚠️ Завершіть поточний чат перед початком нового",
+          show_alert: true
+        });
+        return;
+      }
+      await startManagerChatWithClient(managerId, clientId, true);
+      await bot.answerCallbackQuery(query.id);
+    }
+
+    // ========== 📜 Перегляд історії ==========
+    else if (data.startsWith('show_history_')) {
       const parts = data.split('_');
       const clientId = parts[2];
       const offset = parseInt(parts[3] || 0);
       await sendClientHistory(managerId, clientId, offset);
       await bot.answerCallbackQuery(query.id);
-      
-    } else if (data === '✅ Відправити замовлення менеджеру') {
+    }
+
+    // ========== 📦 Відправити замовлення ==========
+    else if (data === '✅ Відправити замовлення менеджеру') {
       await finalizeAndSendOrder(managerId, query.from.first_name || 'Клієнт');
       await bot.answerCallbackQuery(query.id);
-      
-    } else if (data === '🏠 Головне меню') {
-      await bot.sendMessage(managerId, "📋 Головне меню:", mainMenu);
+    }
+
+    // ========== 🏠 Головне меню ==========
+    else if (data === '🏠 Головне меню') {
+      await bot.sendMessage(managerId, "📋 Головне меню:", managerMenu);
       await bot.answerCallbackQuery(query.id);
     }
-    
+
   } catch (err) {
     console.error("⚠ callback_query error:", err);
     await bot.answerCallbackQuery(query.id, {
@@ -907,6 +882,7 @@ bot.on('callback_query', async (query) => {
     });
   }
 });
+
 // ==================== ЛОГИКА ОТСЛЕЖИВАННЯ І ФІНАЛІЗАЦІЇ ====================
 function initOrderTracking(chatId) {
   if (!userProfiles[chatId]) {
@@ -942,11 +918,25 @@ async function handlePhotoMessage(msg) {
 
   console.log(`📷 Фото отримано від ${chatId} (${userName}): ${caption}`);
 
+  // 🔥 Проверка: если клиент уже в чате с менеджером
+  if (userStates[chatId]?.step === 'manager_chat') {
+    const managerId = userStates[chatId].managerId;
+    if (managerId && activeManagerChats[managerId] === chatId) {
+      await bot.sendPhoto(managerId, fileId, {
+        caption: `📷 ${userName} (${chatId}):\n${caption || '(без коментаря)'}`
+      });
+      await logMessage(chatId, managerId, `[ФОТО] ${caption}`, 'client');
+      return; // ⚠️ НЕ создаём заказ
+    }
+  }
+
+  // Иначе — обычный сценарий нового заказа
   if (!userProfiles[chatId]) {
     userProfiles[chatId] = { chatId, created: Date.now(), clarifications: [] };
   }
 
   initOrderTracking(chatId);
+}
 
   // 🔥 фиксируем, что это фото-заказ
   userProfiles[chatId].orderType = 'photo';
@@ -2418,42 +2408,32 @@ async function forwardToClient(clientId, text) {
 
 // ==================== ОБНОВЛЕННАЯ ФУНКЦИЯ ЗАВЕРШЕНИЯ ЧАТА ====================
 async function handleEndCommand(chatId) {
-  // Проверяем, является ли это клиентом в чате с менеджером
   if (userStates[chatId]?.step === 'manager_chat') {
     const managerId = userStates[chatId].managerId;
-    const managerName = getManagerName(managerId);
-    
-    // 🔒 Блокировка СРАЗУ и надолго
-    managerLocks[managerId] = Date.now() + 5000;
-    setTimeout(() => {
-      delete managerLocks[managerId];
-    }, 5500);
-    
-    // 🔥 СНАЧАЛА очищаем состояния (до удаления кнопки)
+
+    // 🔥 Сразу очищаем состояния
     delete activeManagerChats[managerId];
     delete userStates[chatId];
-    
-    // ТЕПЕРЬ удаляем кнопку
+
+    // Удаляем кнопку у менеджера
     await removeManagerNotificationButton(managerId, chatId);
-    
+
     // Уведомляем менеджера
     if (managerId) {
       await bot.sendMessage(managerId, `✅ Клієнт завершив чат.`, managerMenu);
     }
-    
-    // Уведомляем клиента (с правильным меню)
+
+    // Уведомляем клиента
     if (String(chatId).startsWith('site-')) {
       await sendToWebClient(chatId, '✅ Чат завершено.');
     } else {
       await bot.sendMessage(chatId, '✅ Чат завершено. Повертаємось до головного меню.', mainMenu);
     }
-    
-    return; // Важно - прерываем выполнение
+
+    return;
   } else if (isManager(chatId)) {
-    // Менеджер завершает чат
     await endManagerChat(chatId);
   } else {
-    // Обычный пользователь не в чате
     await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
   }
 }
@@ -2492,28 +2472,22 @@ async function removeManagerNotificationButton(managerId, clientId) {
 // ==================== ОБНОВЛЕННАЯ ФУНКЦИЯ ЗАВЕРШЕНИЯ ЧАТА МЕНЕДЖЕРОМ ====================
 async function endManagerChat(managerId) {
   const clientId = activeManagerChats[managerId];
-  
-  // 🔒 Блокировка на 10 секунд
-  managerLocks[managerId] = Date.now() + 10000;
-  setTimeout(() => {
-    delete managerLocks[managerId];
-  }, 10500);
-  
+
   if (clientId) {
-    // 🚨 Удаляем ТОЛЬКО кнопку текущего клиента из памяти СРАЗУ
+    // 🚨 Удаляем кнопку текущего клиента из памяти
     if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
       delete managerNotifications[managerId][clientId];
     }
-    
+
     const managerName = getManagerName(managerId);
-    
-    // Теперь удаляем кнопку визуально
+
+    // Удаляем кнопку визуально
     await removeManagerNotificationButton(managerId, clientId);
-    
+
     // Очищаем состояния
     delete activeManagerChats[managerId];
     delete userStates[clientId];
-    
+
     // Уведомляем клиента
     try {
       if (String(clientId).startsWith('site-')) {
@@ -2522,20 +2496,19 @@ async function endManagerChat(managerId) {
         await bot.sendMessage(clientId, `✅ Менеджер ${managerName} завершив чат.`, mainMenu);
       }
     } catch (error) {
-      console.log(`Не удалось уведомить клиента ${clientId} о завершении чата:`, error.message);
+      console.log(`Не удалось уведомить клиента ${clientId} про завершення чату:`, error.message);
     }
   } else {
-    // ⚡ НОВОЕ: чистим все висячие уведомления, если clientId уже нет
+    // ⚡ Якщо clientId вже немає — чистимо старі кнопки
     if (managerNotifications[managerId]) {
       for (const staleClientId of Object.keys(managerNotifications[managerId])) {
         await removeManagerNotificationButton(managerId, staleClientId);
       }
     }
   }
-  
+
   await bot.sendMessage(managerId, '✅ Чат завершено.', managerMenu);
 }
-
 // ========== ФУНКЦІЇ ІСТОРІЇ ==========
 async function searchClientHistory(managerId, query) {
   if (!pool) {
@@ -2733,20 +2706,15 @@ async function sendClientHistory(managerId, clientId, offset = 0) {
 }
 // ==================== ОЧИСТКА СТАРЫХ УВЕДОМЛЕНЬ ====================
 async function cleanOldNotifications() {
-  for (const managerId of MANAGERS) {
-    if (!managerNotifications[managerId]) continue;
+  // 🔥 Просто логируем, ничего не удаляем
+  const activeCount = Object.keys(activeManagerChats).length;
+  const waitingCount = waitingClients.size;
 
-    for (const [clientId, msgId] of Object.entries(managerNotifications[managerId])) {
-      // Если клиент не в очереди и не в активном чате - удаляем кнопку
-      if (!waitingClients.has(clientId) &&
-          !waitingClients.has(String(clientId)) &&
-          !Object.values(activeManagerChats).includes(clientId) &&
-          !Object.values(activeManagerChats).includes(String(clientId))) {
-        
-        await removeManagerNotificationButton(managerId, clientId);
-      }
-    }
-  }
+  console.log(`📊 Менеджерські повідомлення: ${Object.keys(managerNotifications).length} менеджерів`);
+  console.log(`📊 Активні чати: ${activeCount}, Очікують: ${waitingCount}`);
+
+  // ⚠️ Не удаляем кнопки, чтобы не терять клиентов в списке
+  return;
 }
 
 async function showClientsList(managerId) {
@@ -3831,6 +3799,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
