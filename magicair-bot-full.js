@@ -936,7 +936,6 @@ async function handlePhotoMessage(msg) {
   }
 
   initOrderTracking(chatId);
-}
 
   // 🔥 фиксируем, что это фото-заказ
   userProfiles[chatId].orderType = 'photo';
@@ -966,38 +965,6 @@ async function handlePhotoMessage(msg) {
 
   setAutoFinalize(chatId, userName);
 }
-
-// ==================== ОБРОБКА УТОЧНЕННЯ ДО ФОТО ====================
-async function handlePhotoClarification(chatId, text, userName) {
-  if (text === '✅ Відправити замовлення менеджеру' || text === '🏠 Головне меню') return;
-
-  const pending = userProfiles[chatId]?.pendingPhotoOrder;
-  if (!pending) return;
-
-  if (!userProfiles[chatId].clarifications) {
-    userProfiles[chatId].clarifications = [];
-  }
-
-  // сохраняем уточнение в массив, но caption НЕ затираем
- userProfiles[chatId].clarifications.push(text);
-userProfiles[chatId].lastPhotoOrder = pending;
-userProfiles[chatId].lastOrder = pending.caption || "(фото без коментаря)";
-userProfiles[chatId].orderStatus = 'ready';
-
-// больше не нужно хранить pending — он перенесён в lastPhotoOrder
-delete userProfiles[chatId].pendingPhotoOrder;
-
-await bot.sendMessage(chatId,
-  "✅ Уточнення додано до фото-замовлення!\n\n" +
-  "🎯 Натисніть '✅ Відправити замовлення менеджеру' щоб відправити зараз\n" +
-  "📝 Або додайте ще деталі протягом 5 хвилин\n" +
-  "⏰ Замовлення автоматично відправиться менеджеру через 5 хвилин",
-  orderCollectionMenu
-);
-
-setAutoFinalize(chatId, userName);
-}
-
 // ==================== ФИНАЛИЗАЦИЯ ====================
 async function finalizeAndSendOrder(chatId, userName) {
   const profile = userProfiles[chatId];
@@ -3799,6 +3766,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
