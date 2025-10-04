@@ -660,7 +660,32 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // 🖼 Фото
+  // 👨‍💼 Якщо це менеджер
+  if (isManager(chatId)) {
+    const managerId = chatId;
+    const clientId = activeManagerChats[managerId];
+
+    // 🖼 Фото від менеджера
+    if (msg.photo) {
+      if (clientId) {
+        const fileId = msg.photo[msg.photo.length - 1].file_id;
+        const caption = msg.caption || '';
+        await bot.sendPhoto(clientId, fileId, {
+          caption: `👨‍💼 ${getManagerName(managerId)}: ${caption || '(без коментаря)'}`
+        });
+        await logMessage(managerId, clientId, `[ФОТО] ${caption}`, 'manager');
+      } else {
+        await bot.sendMessage(managerId, 'ℹ️ Спочатку оберіть клієнта, щоб надіслати фото.');
+      }
+      return; // ⚠️ Не вважаємо це замовленням
+    }
+
+    // Текстове повідомлення від менеджера
+    await handleManagerMessage(msg);
+    return;
+  }
+
+  // 🖼 Фото від клієнта
   if (msg.photo) {
     const managerId = Object.keys(activeManagerChats).find(
       mId => activeManagerChats[mId] == chatId
@@ -673,8 +698,9 @@ bot.on('message', async (msg) => {
       await bot.sendPhoto(managerId, fileId, {
         caption: `📷 ${userName} (${chatId}):\n${caption || '(без коментаря)'}`
       });
+      await bot.sendMessage(chatId, '📸 Фото відправлено менеджеру ✅');
       await logMessage(chatId, managerId, `[ФОТО] ${caption}`, 'client');
-      return;
+      return; // ⚠️ Не створюємо нове замовлення
     }
 
     // Інакше — нове фото-замовлення
@@ -692,12 +718,6 @@ bot.on('message', async (msg) => {
   console.log(`📨 ${chatId} (${userName}): ${text}`);
 
   try {
-    // 👨‍💼 Якщо це менеджер
-    if (isManager(chatId)) {
-      await handleManagerMessage(msg);
-      return;
-    }
-
     // 💬 Якщо клієнт зараз у чаті з менеджером
     const managerId = Object.keys(activeManagerChats).find(
       mId => activeManagerChats[mId] == chatId
@@ -3704,6 +3724,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
