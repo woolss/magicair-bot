@@ -167,48 +167,6 @@ const holidays = [
   { date: '31.10', name: 'Хелловін', emoji: '🎃' }
 ];
 
-// Функция для очистки "зависших" состояний 
-function cleanupStaleStates() {
-  // Логи убраны, только логика очистки (без спама в консоль)
-  for (const [chatId, state] of Object.entries(userStates)) {
-    if (state.step === 'manager_chat' && !activeManagerChats[state.managerId]) {
-      delete userStates[chatId];
-    }
-  }
-
-  // Проверяем все активные чаты менеджеров
-  for (const [managerId, clientId] of Object.entries(activeManagerChats)) {
-    // Если клиент не в состоянии manager_chat, удаляем связь
-    if (
-      !userStates[clientId] ||
-      userStates[clientId].step !== 'manager_chat' ||
-      userStates[clientId].managerId !== parseInt(managerId)
-    ) {
-      // console.log(`🗑 Удаляем зависший чат: менеджер ${managerId} - клиент ${clientId}`);
-      delete activeManagerChats[managerId];
-    }
-  }
-  
-  // Проверяем все состояния клиентов в manager_chat
-  for (const [clientId, state] of Object.entries(userStates)) {
-    if (state.step === 'manager_chat') {
-      const managerId = state.managerId;
-      // Если менеджер не связан с этим клиентом, очищаем состояние клиента
-      if (!managerId || activeManagerChats[managerId] !== clientId) {
-        // console.log(`🗑 Удаляем зависшее состояние клиента ${clientId}`);
-        delete userStates[clientId];
-      }
-    }
-  }
-
-  // console.log('✅ Очистка завершена'); // убрал спам
-}
-
-// ДОБАВИТЬ автоочистку каждые 10 минут
-setInterval(() => {
-  cleanupStaleStates();
-}, 10 * 60 * 1000);
-
 const managerNotifications = {}; // Хранит ID уведомлений о новых клиентах с кнопкой "Почати чат"
 // ========== ANTISPAM ==========
 const userRateLimit = new Map();
@@ -687,6 +645,7 @@ bot.onText(/\/start/, async (msg) => {
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const userName = msg.from.first_name || 'Клієнт';
+  const text = msg.text || '';
 
   // 🚫 Антиспам-перевірка
   const rateStatus = checkRateLimit(chatId);
@@ -700,10 +659,24 @@ bot.on('message', async (msg) => {
 
   // Якщо є фото → спеціальна обробка
   if (msg.photo) {
+    // 🟢 Якщо клієнт зараз у чаті з менеджером — просто пересилаємо фото
+    const managerId = Object.keys(activeManagerChats).find(
+      mId => activeManagerChats[mId] == chatId
+    );
+    const fileId = msg.photo[msg.photo.length - 1].file_id;
+    const caption = msg.caption || '';
+
+    if (managerId) {
+      await bot.sendPhoto(managerId, fileId, {
+        caption: `📷 ${userName} (${chatId}):\n${caption || '(без коментаря)'}`
+      });
+      await logMessage(chatId, managerId, `[ФОТО] ${caption}`, 'client');
+      return; // ⚠️ Не створюємо замовлення
+    }
+
+    // 🔄 Інакше — це нове фото-замовлення
     return await handlePhotoMessage(msg);
   }
-
-  const text = msg.text || '';
 
   // Обробка команд
   if (text && text.startsWith('/')) {
@@ -716,23 +689,43 @@ bot.on('message', async (msg) => {
   console.log(`📨 ${chatId} (${userName}): ${text}`);
 
   try {
-   if (isManager(chatId)) {
-  await handleManagerMessage(msg);
-} else {
+    if (isManager(chatId)) {
+      await handleManagerMessage(msg);
+      return;
+    }
 
-  // 🟢 Універсальна перевірка: якщо клієнт зараз у чаті з менеджером
-const managerId = Object.keys(activeManagerChats).find(
-  mId => activeManagerChats[mId] == chatId
-);
+    // 🟢 Якщо клієнт зараз у чаті з менеджером
+    const managerId = Object.keys(activeManagerChats).find(
+      mId => activeManagerChats[mId] == chatId
+    );
 
-if (managerId) {
-  await bot.sendMessage(managerId, `💬 ${userName} (${chatId}): ${msg.text}`);
-  await logMessage(chatId, managerId, msg.text, 'client');
-  console.log(`💬 Повідомлення від ${chatId} переслано менеджеру ${managerId}`);
-  return; // ⚠️ Не передаємо в AI і не створюємо нове замовлення
-}
-  // Якщо менеджер ще не підключився
-  if (userStates[chatId]?.step !== 'manager_chat') {
+    if (managerId) {
+      // 🏠 Якщо клієнт натиснув "Головне меню" → завершуємо чат
+      if (text === '🏠 Головне меню') {
+        delete activeManagerChats[managerId];
+        delete userStates[chatId];
+
+        await bot.sendMessage(
+          chatId,
+          '✅ Чат завершено. Ви повернулись до головного меню.',
+          mainMenu
+        );
+        await bot.sendMessage(
+          managerId,
+          `❌ Клієнт ${userName} (${chatId}) завершив чат.`,
+          managerMenu
+        );
+        return;
+      }
+
+      // 🔁 Інакше — просто пересилаємо менеджеру
+      await bot.sendMessage(managerId, `💬 ${userName} (${chatId}): ${text}`);
+      await logMessage(chatId, managerId, text, 'client');
+      console.log(`💬 Повідомлення від ${chatId} переслано менеджеру ${managerId}`);
+      return; // ⚠️ Не передаємо в AI і не створюємо нове замовлення
+    }
+
+    // 🧩 Якщо менеджер ще не підключився
     const lastOrderTime = userProfiles[chatId]?.lastOrderTime;
     if (userProfiles[chatId]?.pendingPhotoOrder) {
       if (text !== '✅ Відправити замовлення менеджеру' && text !== '🏠 Головне меню') {
@@ -743,11 +736,10 @@ if (managerId) {
       await handleOrderClarification(chatId, text, userName);
       return;
     }
-  }
 
-  // все інше → як звичайне повідомлення
-  await handleClientMessage(msg);
-}
+    // 🔚 Усі інші повідомлення → AI або створення замовлення
+    await handleClientMessage(msg);
+
   } catch (error) {
     console.error('⚠ Message error:', error);
     await bot.sendMessage(chatId, '⚠ Помилка. Спробуйте /start').catch(() => {});
@@ -918,28 +910,35 @@ async function handlePhotoMessage(msg) {
 
   console.log(`📷 Фото отримано від ${chatId} (${userName}): ${caption}`);
 
-  // 🔥 Проверка: если клиент уже в чате с менеджером
-  if (userStates[chatId]?.step === 'manager_chat') {
-    const managerId = userStates[chatId].managerId;
-    if (managerId && activeManagerChats[managerId] === chatId) {
+  // 🟢 Якщо клієнт зараз у чаті з менеджером — просто пересилаємо фото
+  const managerId = Object.keys(activeManagerChats).find(
+    mId => activeManagerChats[mId] == chatId
+  );
+
+  if (managerId) {
+    try {
       await bot.sendPhoto(managerId, fileId, {
         caption: `📷 ${userName} (${chatId}):\n${caption || '(без коментаря)'}`
       });
       await logMessage(chatId, managerId, `[ФОТО] ${caption}`, 'client');
-      return; // ⚠️ НЕ создаём заказ
+      console.log(`📷 Фото від ${chatId} переслано менеджеру ${managerId}`);
+      return; // ⚠️ Не створюємо нове замовлення
+    } catch (err) {
+      console.error(`❌ Не вдалося переслати фото менеджеру ${managerId}:`, err.message);
+      return;
     }
   }
 
-  // Иначе — обычный сценарий нового заказа
+  // 🔥 Якщо менеджер ще не підключився — стандартна логіка замовлення
   if (!userProfiles[chatId]) {
     userProfiles[chatId] = { chatId, created: Date.now(), clarifications: [] };
   }
 
   initOrderTracking(chatId);
 
-  // 🔥 фиксируем, что это фото-заказ
+  // 🔥 Фіксуємо, що це фото-замовлення
   userProfiles[chatId].orderType = 'photo';
-  userProfiles[chatId].pendingPhotoOrder = { fileId, caption }; // <--- обязательно
+  userProfiles[chatId].pendingPhotoOrder = { fileId, caption };
   userProfiles[chatId].lastPhotoOrder = { fileId, caption };
   userProfiles[chatId].lastOrder = caption || "(фото без коментаря)";
   userProfiles[chatId].orderStatus = caption ? 'ready' : 'collecting';
@@ -1751,11 +1750,9 @@ async function notifyManagers(clientId, userName, topic) { // ДОБАВЛЕНО
   }
 }
 
-// ==================== ОБНОВЛЕННАЯ ФУНКЦИЯ СТАРТА ЧАТА ====================
+// ==================== ОНОВЛЕНА ФУНКЦІЯ СТАРТУ ЧАТУ ====================
 async function startManagerChatWithClient(managerId, clientId, fromHistory = false) {
   const managerName = getManagerName(managerId);
-
-  cleanupStaleStates();
 
   // Перевіряємо активний чат у менеджера
   if (activeManagerChats[managerId]) {
@@ -1785,9 +1782,6 @@ async function startManagerChatWithClient(managerId, clientId, fromHistory = fal
     }
   }
 
-  // 🔥 ТІЛЬКИ ЗАРАЗ видаляємо кнопку при успішному підключенні
-  await removeManagerNotificationButton(managerId, clientId);
-
   // Встановлюємо зв'язок
   activeManagerChats[managerId] = clientId;
   userStates[clientId] = { 
@@ -1815,7 +1809,11 @@ async function startManagerChatWithClient(managerId, clientId, fromHistory = fal
         await sendToWebClient(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
         await logMessage(managerId, clientId, welcomeMessage, 'manager');
       }
-    } else {
+
+      // 🟢 Підказка для клієнта
+      await sendToWebClient(clientId, "ℹ️ Щоб завершити чат, натисніть '🏠 Головне меню'.");
+    } 
+    else {
       const notificationText = fromHistory
         ? `👨‍💼 Менеджер ${managerName} підключився до чату!`
         : `👨‍💼 Менеджер ${managerName} підключився до чату!\nВін готовий відповісти на ваші запитання.`;
@@ -1827,6 +1825,12 @@ async function startManagerChatWithClient(managerId, clientId, fromHistory = fal
         await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
         await logMessage(managerId, clientId, welcomeMessage, 'manager');
       }
+
+      // 🟢 Підказка для клієнта
+      await bot.sendMessage(
+        clientId,
+        "ℹ️ Щоб завершити чат, натисніть '🏠 Головне меню'."
+      );
     }
   } catch (error) {
     console.error(`Failed to notify client ${clientId}:`, error.message);
@@ -2393,26 +2397,11 @@ async function handleEndCommand(chatId) {
     await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
   }
 }
-// ==================== ВИПРАВЛЕНА ФУНКЦІЯ ДЛЯ ВИДАЛЕННЯ КНОПКИ ====================
+// ==================== СПРОЩЕНА ФУНКЦІЯ (БЕЗ ВИДАЛЕННЯ КНОПОК) ====================
 async function removeManagerNotificationButton(managerId, clientId) {
-  // ВАЖЛИВО: Видаляємо кнопку ТІЛЬКИ якщо є збережене повідомлення
-  if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
-    const msgId = managerNotifications[managerId][clientId];
-    
-    try {
-      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
-        chat_id: managerId,
-        message_id: msgId
-      });
-      console.log(`🗑️ Кнопка прибрана у менеджера ${managerId} для клієнта ${clientId}`);
-    } catch (err) {
-      // Якщо не вдалося видалити кнопку - не критично, просто логуємо
-      console.log(`Не вдалося прибрати кнопку: ${err.message}`);
-    }
-    
-    // Видаляємо запис про повідомлення
-    delete managerNotifications[managerId][clientId];
-  }
+  // Просто логируем, нічого не змінюємо
+  console.log(`ℹ️ Пропущено видалення кнопки для менеджера ${managerId}, клієнт ${clientId}`);
+  return;
 }
 // ==================== ОБНОВЛЕННАЯ ФУНКЦИЯ ЗАВЕРШЕНИЯ ЧАТА МЕНЕДЖЕРОМ ====================
 async function endManagerChat(managerId) {
@@ -2420,9 +2409,6 @@ async function endManagerChat(managerId) {
 
   if (clientId) {
     const managerName = getManagerName(managerId);
-
-    // Видаляємо кнопку поточного клієнта
-    await removeManagerNotificationButton(managerId, clientId);
 
     // Очищаємо стани
     delete activeManagerChats[managerId];
@@ -2638,22 +2624,8 @@ async function sendClientHistory(managerId, clientId, offset = 0) {
   }
 }
 // ==================== ОЧИСТКА СТАРЫХ УВЕДОМЛЕНЬ ====================
-async function cleanOldNotifications() {
-  // 🔥 Просто логируем, ничего не удаляем
-  const activeCount = Object.keys(activeManagerChats).length;
-  const waitingCount = waitingClients.size;
-
-  console.log(`📊 Менеджерські повідомлення: ${Object.keys(managerNotifications).length} менеджерів`);
-  console.log(`📊 Активні чати: ${activeCount}, Очікують: ${waitingCount}`);
-
-  // ⚠️ Не удаляем кнопки, чтобы не терять клиентов в списке
-  return;
-}
-
 async function showClientsList(managerId) {
-  // НЕ викликаємо cleanOldNotifications() - це призводить до проблем
-  cleanupStaleStates(); // Тільки очищуємо застарілі стани
-  
+ 
   let clientsList = '📋 КЛІЄНТИ:\n\n';
   const waitingClientsList = Array.from(waitingClients);
 
@@ -3728,6 +3700,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
