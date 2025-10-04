@@ -107,8 +107,11 @@ if (!token) {
 
 const MANAGERS = process.env.MANAGER_IDS
   ? process.env.MANAGER_IDS.split(',').map(s => parseInt(s.trim())).filter(Boolean)
-  : [7764495189,5106454153, /* третій ID */];
-
+  : [
+      7764495189, 
+      // 5106454153, // тимчасово вимкнено
+      /* третій ID */
+    ];
 // --- Додайте console.log сюди ---
 console.log('Список менеджерів:', MANAGERS);
 // ------------------------------------
@@ -3701,6 +3704,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
