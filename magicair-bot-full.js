@@ -588,104 +588,96 @@ function isOrderClarification(text, chatId) {
 
   return hasKeyword || hasPhrase;
 }
-// ======= Обробка уточнень після фото-замовлення =======
+// ==================== УТОЧНЕННЯ ДО ФОТО-ЗАМОВЛЕННЯ ====================
 async function handlePhotoClarification(chatId, text, userName) {
   try {
     const profile = userProfiles[chatId];
-    if (!profile || (!profile.pendingPhotoOrder && !profile.lastPhotoOrder)) return;
+    if (!profile || !profile.pendingPhotoOrder) return;
 
-    // ✏️ Оновлюємо caption
-    const currentCaption = profile.pendingPhotoOrder?.caption || profile.lastPhotoOrder?.caption || "";
-    const newCaption = currentCaption + (currentCaption ? "\n" : "") + `➕ ${text}`;
+    // 📝 Додаємо уточнення в caption
+    const currentCaption = profile.pendingPhotoOrder.caption || '';
+    profile.pendingPhotoOrder.caption =
+      currentCaption + (currentCaption ? '\n' : '') + `➕ ${text}`;
 
-    // Синхронізація
-    if (profile.pendingPhotoOrder) profile.pendingPhotoOrder.caption = newCaption;
-    if (profile.lastPhotoOrder) profile.lastPhotoOrder.caption = newCaption;
+    // 🔄 Синхронізація з lastPhotoOrder
+    if (profile.lastPhotoOrder) {
+      profile.lastPhotoOrder.caption = profile.pendingPhotoOrder.caption;
+    }
 
-    // Додаємо уточнення до списку
+    // 📋 Зберігаємо уточнення
     if (!profile.clarifications) profile.clarifications = [];
     profile.clarifications.push(text);
 
-    // 🔥 Оновлюємо повідомлення менеджерам, якщо воно було відправлене
+    // 🔔 Оновлюємо повідомлення менеджерів (якщо є)
     for (const [managerId, notifications] of Object.entries(managerNotifications)) {
       const notification = notifications[chatId];
-      if (!notification) continue;
 
-      // Формуємо блок уточнень
-      let clarificationsBlock = "";
-      if (profile.clarifications?.length > 0) {
-        clarificationsBlock =
-          "\n\n➡️ Уточнення:\n" +
-          profile.clarifications.map((c, i) => `${i + 1}. ${c}`).join("\n");
-      }
+      if (notification && notification.messageId) {
+        try {
+          // Формуємо блок уточнень
+          let clarificationsBlock = "";
+          if (profile.clarifications?.length > 0) {
+            clarificationsBlock =
+              "\n\n➡️ Уточнення:\n" +
+              profile.clarifications.map((c, i) => `${i + 1}. ${c}`).join("\n");
+          }
 
-      try {
-        if (notification.isPhoto) {
-          // 🖼 Оновлення підпису фото
-          await bot.editMessageCaption(
-            `📷 Фото-замовлення від ${userName} (ID: ${chatId}):\n\n` +
-              `📝 Опис замовлення: ${newCaption}${clarificationsBlock}\n\n` +
-              `🔔 Клієнт додав нове уточнення!`,
-            {
-              chat_id: managerId,
-              message_id: notification.messageId,
-              reply_markup: {
-                inline_keyboard: [
-                  [
-                    {
-                      text: "💬 Почати чат з клієнтом",
-                      callback_data: `client_chat_${chatId}`,
-                    },
-                  ],
-                ],
-              },
-            }
-          );
-        } else {
-          // 📝 Оновлення текстового замовлення
-          await bot.editMessageText(
-            `🆕 Фінальне замовлення від ${userName} (ID: ${chatId}):\n\n${profile.lastOrder}${clarificationsBlock}\n\n` +
-              `🔔 Клієнт додав нове уточнення!`,
-            {
-              chat_id: managerId,
-              message_id: notification.messageId,
-              reply_markup: {
-                inline_keyboard: [
-                  [
-                    {
-                      text: "💬 Почати чат з клієнтом",
-                      callback_data: `client_chat_${chatId}`,
-                    },
-                  ],
-                ],
-              },
-            }
-          );
+          if (notification.isPhoto) {
+            await bot.editMessageCaption(
+              `📷 Фото-замовлення від ${userName} (ID: ${chatId}):\n\n` +
+                `📝 Опис замовлення: ${profile.pendingPhotoOrder.caption}${clarificationsBlock}\n\n` +
+                `🔔 Клієнт додав нове уточнення!`,
+              {
+                chat_id: managerId,
+                message_id: notification.messageId,
+                reply_markup: {
+                  inline_keyboard: [
+                    [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
+                  ]
+                }
+              }
+            );
+          } else {
+            await bot.editMessageText(
+              `🆕 Фінальне замовлення від ${userName} (ID: ${chatId}):\n\n${profile.lastOrder}${clarificationsBlock}\n\n` +
+                `🔔 Клієнт додав нове уточнення!`,
+              {
+                chat_id: managerId,
+                message_id: notification.messageId,
+                reply_markup: {
+                  inline_keyboard: [
+                    [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
+                  ]
+                }
+              }
+            );
+          }
+
+          console.log(`✅ Оновлено повідомлення менеджера ${managerId} про замовлення від ${chatId}`);
+        } catch (editErr) {
+          console.error(`⚠️ Не вдалося оновити повідомлення для менеджера ${managerId}:`, editErr.message);
         }
-
-        console.log(
-          `✅ Оновлено повідомлення менеджера ${managerId} про замовлення від ${chatId}`
-        );
-      } catch (editErr) {
-        // Якщо не вдалося оновити (видалено, редагування заборонено) — надсилаємо нове
-        console.error(
-          `⚠️ Не вдалося оновити повідомлення для менеджера ${managerId}:`,
-          editErr.message
-        );
-        await bot.sendMessage(
-          managerId,
-          `📝 Нове уточнення до замовлення від ${userName} (${chatId}):\n\n"${text}"`
-        );
       }
     }
 
-    // ✅ Повідомлення клієнту
+    // ✅ Відповідь клієнту + показ кнопок
     await bot.sendMessage(
       chatId,
-      `✏️ Додано уточнення до замовлення: "${text}"\n\n💡 Менеджер побачить це уточнення, коли відкриє замовлення.`
+      `✏️ Додано уточнення до замовлення: "${text}"\n\n💡 Менеджер побачить це уточнення коли прийме замовлення.`,
+      {
+        reply_markup: {
+          keyboard: [
+            [{ text: "✅ Відправити замовлення менеджеру" }],
+            [{ text: "🏠 Головне меню" }]
+          ],
+          resize_keyboard: true,
+          one_time_keyboard: false
+        }
+      }
     );
+
   } catch (err) {
-    console.error("⚠ handlePhotoClarification error:", err);
+    console.error('⚠ handlePhotoClarification error:', err);
   }
 }
 // ======= Активация благодарности =======
@@ -3870,6 +3862,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
