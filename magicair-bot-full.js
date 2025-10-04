@@ -594,10 +594,14 @@ async function handlePhotoClarification(chatId, text, userName) {
     const profile = userProfiles[chatId];
     if (!profile || !profile.pendingPhotoOrder) return;
 
-    // 📝 Додаємо уточнення до caption
-    profile.pendingPhotoOrder.caption = (profile.pendingPhotoOrder.caption || '') + ` ${text}`;
+    // ✅ Обновляем caption напрямую
+    const currentCaption = profile.pendingPhotoOrder.caption || '';
+    profile.pendingPhotoOrder.caption = currentCaption + (currentCaption ? '\n' : '') + `➕ ${text}`;
+    
+    // Синхронизируем с lastPhotoOrder
+    profile.lastPhotoOrder.caption = profile.pendingPhotoOrder.caption;
 
-    // 🧑‍💼 Якщо менеджер вже підключений до цього клієнта
+    // Если менеджер уже подключен
     const managerId = Object.keys(activeManagerChats).find(
       mId => activeManagerChats[mId] == chatId
     );
@@ -610,14 +614,12 @@ async function handlePhotoClarification(chatId, text, userName) {
       await logMessage(chatId, managerId, `[Уточнення до фото] ${text}`, 'client');
     }
 
-    // 📩 Підтвердження клієнту
-    await bot.sendMessage(chatId, `✍️ Додано уточнення до замовлення: "${text}"`);
+    await bot.sendMessage(chatId, `✏️ Додано уточнення до замовлення: "${text}"`);
 
   } catch (err) {
     console.error('⚠ handlePhotoClarification error:', err);
   }
 }
-
 // ======= Активация благодарности =======
 function isThanksMessage(text) {
   if (!text) return false;
@@ -3756,6 +3758,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
