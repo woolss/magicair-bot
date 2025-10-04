@@ -588,6 +588,35 @@ function isOrderClarification(text, chatId) {
 
   return hasKeyword || hasPhrase;
 }
+// ======= Обробка уточнень після фото-замовлення =======
+async function handlePhotoClarification(chatId, text, userName) {
+  try {
+    const profile = userProfiles[chatId];
+    if (!profile || !profile.pendingPhotoOrder) return;
+
+    // 📝 Додаємо уточнення до caption
+    profile.pendingPhotoOrder.caption = (profile.pendingPhotoOrder.caption || '') + ` ${text}`;
+
+    // 🧑‍💼 Якщо менеджер вже підключений до цього клієнта
+    const managerId = Object.keys(activeManagerChats).find(
+      mId => activeManagerChats[mId] == chatId
+    );
+
+    if (managerId) {
+      await bot.sendMessage(
+        managerId,
+        `📝 Уточнення до фото-замовлення від ${userName} (${chatId}): ${text}`
+      );
+      await logMessage(chatId, managerId, `[Уточнення до фото] ${text}`, 'client');
+    }
+
+    // 📩 Підтвердження клієнту
+    await bot.sendMessage(chatId, `✍️ Додано уточнення до замовлення: "${text}"`);
+
+  } catch (err) {
+    console.error('⚠ handlePhotoClarification error:', err);
+  }
+}
 
 // ======= Активация благодарности =======
 function isThanksMessage(text) {
@@ -3727,6 +3756,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
