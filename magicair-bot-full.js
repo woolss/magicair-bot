@@ -1753,12 +1753,6 @@ async function notifyManagers(clientId, userName, topic) { // ДОБАВЛЕНО
 
 // ==================== ОБНОВЛЕННАЯ ФУНКЦИЯ СТАРТА ЧАТА ====================
 async function startManagerChatWithClient(managerId, clientId, fromHistory = false) {
-  // 🆕 Проверка блокировки прямо здесь (двойная защита)
-  if (managerLocks[managerId] && Date.now() < managerLocks[managerId]) {
-    console.log(`⛔ Менеджер ${managerId} заблокирован, не начинаем чат с ${clientId}`);
-    return;
-  }
-  
   const managerName = getManagerName(managerId);
 
   cleanupStaleStates();
@@ -1791,7 +1785,7 @@ async function startManagerChatWithClient(managerId, clientId, fromHistory = fal
     }
   }
 
-  // 🔥 ВАЖНО: Удаляем кнопку сразу при старте чата
+  // 🔥 ТІЛЬКИ ЗАРАЗ видаляємо кнопку при успішному підключенні
   await removeManagerNotificationButton(managerId, clientId);
 
   // Встановлюємо зв'язок
@@ -1808,41 +1802,36 @@ async function startManagerChatWithClient(managerId, clientId, fromHistory = fal
   await bot.sendMessage(managerId, `✅ Ви підключені до клієнта (${clientId}).`);
 
   // Повідомляємо клієнта
-  // Повідомляємо клієнта
-try {
-  if (String(clientId).startsWith('site-')) {
-    // Різні повідомлення для історії та черги
-    const notificationText = fromHistory
-      ? `👨‍💼 Менеджер ${managerName} підключився до чату!`
-      : `👨‍💼 Менеджер ${managerName} підключився до чату!\nВін готовий відповісти на ваші запитання.`;
-    
-    await sendToWebClient(clientId, notificationText);
-    
-    // Привітання ТІЛЬКИ якщо НЕ з історії
-    if (!fromHistory) {
-      const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
-      await sendToWebClient(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
-      await logMessage(managerId, clientId, welcomeMessage, 'manager');
+  try {
+    if (String(clientId).startsWith('site-')) {
+      const notificationText = fromHistory
+        ? `👨‍💼 Менеджер ${managerName} підключився до чату!`
+        : `👨‍💼 Менеджер ${managerName} підключився до чату!\nВін готовий відповісти на ваші запитання.`;
+      
+      await sendToWebClient(clientId, notificationText);
+      
+      if (!fromHistory) {
+        const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
+        await sendToWebClient(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
+        await logMessage(managerId, clientId, welcomeMessage, 'manager');
+      }
+    } else {
+      const notificationText = fromHistory
+        ? `👨‍💼 Менеджер ${managerName} підключився до чату!`
+        : `👨‍💼 Менеджер ${managerName} підключився до чату!\nВін готовий відповісти на ваші запитання.`;
+      
+      await bot.sendMessage(clientId, notificationText, clientInChatMenu);
+      
+      if (!fromHistory) {
+        const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
+        await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
+        await logMessage(managerId, clientId, welcomeMessage, 'manager');
+      }
     }
-  } else {
-    // Різні повідомлення для історії та черги
-    const notificationText = fromHistory
-      ? `👨‍💼 Менеджер ${managerName} підключився до чату!`
-      : `👨‍💼 Менеджер ${managerName} підключився до чату!\nВін готовий відповісти на ваші запитання.`;
-    
-    await bot.sendMessage(clientId, notificationText, clientInChatMenu);
-    
-    // Привітання ТІЛЬКИ якщо НЕ з історії
-    if (!fromHistory) {
-      const welcomeMessage = 'Вітаю! Чим можу вам допомогти?';
-      await bot.sendMessage(clientId, `👨‍💼 ${managerName}: ${welcomeMessage}`);
-      await logMessage(managerId, clientId, welcomeMessage, 'manager');
-    }
-  }
   } catch (error) {
     console.error(`Failed to notify client ${clientId}:`, error.message);
     await bot.sendMessage(managerId, 
-      `⚠️ Не вдалось надіслати повідомлення клієнту ${clientId}.\n` +
+      `⚠️ Не вдалося надіслати повідомлення клієнту ${clientId}.\n` +
       `Можливо, клієнт заблокував бота або видалив чат.`
     );
     delete activeManagerChats[managerId];
@@ -2404,35 +2393,24 @@ async function handleEndCommand(chatId) {
     await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
   }
 }
-// ==================== НОВАЯ ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ КНОПКИ ====================
+// ==================== ВИПРАВЛЕНА ФУНКЦІЯ ДЛЯ ВИДАЛЕННЯ КНОПКИ ====================
 async function removeManagerNotificationButton(managerId, clientId) {
+  // ВАЖЛИВО: Видаляємо кнопку ТІЛЬКИ якщо є збережене повідомлення
   if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
     const msgId = managerNotifications[managerId][clientId];
     
-    // Пробуем 3 раза удалить кнопку
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
-          chat_id: managerId,
-          message_id: msgId
-        });
-        console.log(`🗑️ Кнопка убрана у менеджера ${managerId} для клиента ${clientId} (попытка ${attempt + 1})`);
-        break;
-      } catch (err) {
-        if (attempt < 2) {
-          await new Promise(resolve => setTimeout(resolve, 200)); // Короткая пауза
-        } else {
-          // Последняя попытка - удаляем само сообщение
-          try {
-            await bot.deleteMessage(managerId, msgId);
-            console.log(`🗑️ Сообщение полностью удалено`);
-          } catch (err2) {
-            console.log(`Не удалось удалить: ${err2.message}`);
-          }
-        }
-      }
+    try {
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+        chat_id: managerId,
+        message_id: msgId
+      });
+      console.log(`🗑️ Кнопка прибрана у менеджера ${managerId} для клієнта ${clientId}`);
+    } catch (err) {
+      // Якщо не вдалося видалити кнопку - не критично, просто логуємо
+      console.log(`Не вдалося прибрати кнопку: ${err.message}`);
     }
     
+    // Видаляємо запис про повідомлення
     delete managerNotifications[managerId][clientId];
   }
 }
@@ -2441,21 +2419,16 @@ async function endManagerChat(managerId) {
   const clientId = activeManagerChats[managerId];
 
   if (clientId) {
-    // 🚨 Удаляем кнопку текущего клиента из памяти
-    if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
-      delete managerNotifications[managerId][clientId];
-    }
-
     const managerName = getManagerName(managerId);
 
-    // Удаляем кнопку визуально
+    // Видаляємо кнопку поточного клієнта
     await removeManagerNotificationButton(managerId, clientId);
 
-    // Очищаем состояния
+    // Очищаємо стани
     delete activeManagerChats[managerId];
     delete userStates[clientId];
 
-    // Уведомляем клиента
+    // Уведомляємо клієнта
     try {
       if (String(clientId).startsWith('site-')) {
         await sendToWebClient(clientId, `✅ Менеджер ${managerName} завершив чат.`);
@@ -2463,14 +2436,7 @@ async function endManagerChat(managerId) {
         await bot.sendMessage(clientId, `✅ Менеджер ${managerName} завершив чат.`, mainMenu);
       }
     } catch (error) {
-      console.log(`Не удалось уведомить клиента ${clientId} про завершення чату:`, error.message);
-    }
-  } else {
-    // ⚡ Якщо clientId вже немає — чистимо старі кнопки
-    if (managerNotifications[managerId]) {
-      for (const staleClientId of Object.keys(managerNotifications[managerId])) {
-        await removeManagerNotificationButton(managerId, staleClientId);
-      }
+      console.log(`Не вдалося уведомити клієнта ${clientId} про завершення чату:`, error.message);
     }
   }
 
@@ -2685,11 +2651,8 @@ async function cleanOldNotifications() {
 }
 
 async function showClientsList(managerId) {
-  // 🔥 НОВЕ: Очищаємо старі повідомлення перед показом списку
-  await cleanOldNotifications();   // ✅ без аргумента
-  
-  // 🔧 ДОДАНО: Очищаємо завислі стани перед показом списку
-  cleanupStaleStates();
+  // НЕ викликаємо cleanOldNotifications() - це призводить до проблем
+  cleanupStaleStates(); // Тільки очищуємо застарілі стани
   
   let clientsList = '📋 КЛІЄНТИ:\n\n';
   const waitingClientsList = Array.from(waitingClients);
@@ -2701,7 +2664,6 @@ async function showClientsList(managerId) {
     await bot.sendMessage(managerId, clientsList, managerMenu);
     return;
   }
-
 
   if (waitingClientsList.length > 0) {
     clientsList += '⏳ *ОЧІКУЮТЬ:*\n';
@@ -3766,6 +3728,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
