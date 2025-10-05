@@ -1296,141 +1296,192 @@ async function handleDirectOrder(chatId, text, userName) {
 
 // ===================== CLIENT HANDLER =====================
 async function handleClientMessage(msg) {
-  const chatId = msg.chat.id;
-  const text = msg.text || '';
-  const userName = msg.from.first_name || 'Клієнт';
+  const chatId = msg.chat.id;
+  const text = msg.text || '';
+  const userName = msg.from.first_name || 'Клієнт';
 
-  if (userProfiles[chatId]) userProfiles[chatId].lastActivity = Date.now();
+  if (userProfiles[chatId]) userProfiles[chatId].lastActivity = Date.now();
 
-  if (userStates[chatId]?.step === 'manager_chat') {
-    if (text === '🏠 Головне меню') {
-      await handleEndCommand(chatId);
-      return;
-    }
-    await forwardToManager(chatId, text, userName);
-    return;
-  }
-
-  if (isThanksMessage(text)) {
-    await bot.sendMessage(chatId, "💜 Дякуємо і вам! Радий був допомогти 🎈");
-    return;
-  }
-
-  const isDirectOrder = isOrderMessage(text);
-  // const isOrderClarif = isOrderClarification(text, chatId); // ✅ Убрали, так как эта логика больше не нужна
-
-  if (!userProfiles[chatId]) {
-    userProfiles[chatId] = { 
-      chatId, 
-      created: Date.now(), 
-      notifications: true, 
-      holidayNotifications: [],
-      // clarifications: [] // ✅ Убрали, так как массив уточнений больше не используется
-    };
-  }
-  
-  // 🔥 ЛОГІКА: Створення нового текстового замовлення
-  if (isDirectOrder) {
-    const profile = userProfiles[chatId] || (userProfiles[chatId] = { chatId, created: Date.now() });
-    
-    // ✅ Ініціалізація нового текстового замовлення
-    profile.lastOrder = text;
-    profile.orderType = 'text'; // ⬅️ Ключевой флаг для логики уточнений
-    profile.orderStatus = 'collecting';
-    profile.lastOrderTime = Date.now();
-    
-    // Отправка меню с просьбой уточнить
-    await bot.sendMessage(chatId, 
-      "📝 Я зафіксував ваше замовлення. Уточніть, будь ласка, деталі:\n\n" +
-      "📅 На коли потрібна доставка?\n" +
-      "📍 Доставка чи самовивіз?\n\n" +
-      "💡 Ви можете додати деталі зараз або натиснути кнопку відправки.\n" +
-      "⏰ У вас є 5 хвилин для уточнень.",
-      orderCollectionMenu
-    );
-    
-    setAutoFinalize(chatId, userName); // Встановлюємо таймер авто-відправки
-    return;
-  }
-  
-  // ❌ Предыдущие вызовы handleDirectOrder и handleOrderClarification удалены.
-  
-  // Если это не прямой заказ, управление возвращается в bot.on('message') для обработки AI.
-  return; 
-}
-  // ========= SWITCH ПО КНОПКАМ =========
-  switch (text) {
-  case '🏠 Головне меню':
-    await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
+  // 1. Чат з менеджером
+  if (userStates[chatId]?.step === 'manager_chat') {
+    if (text === '🏠 Головне меню') {
+      await handleEndCommand(chatId);
+      return;
+    }
+    await forwardToManager(chatId, text, userName);
     return;
+  }
+
+  // 2. Подяка
+  if (isThanksMessage(text)) {
+    await bot.sendMessage(chatId, "💜 Дякуємо і вам! Радий був допомогти 🎈");
+    return;
+  }
+  
+  // 3. ОБРОБКА КНОПОК МЕНЮ (НОВИЙ КРОК)
+  const menuHandled = await handleMenuActions(chatId, text, userName);
+  if (menuHandled) {
+      return;
+  }
+
+  // Ініціалізація профілю (якщо він не існував)
+  if (!userProfiles[chatId]) {
+    userProfiles[chatId] = { 
+      chatId, 
+      created: Date.now(), 
+      notifications: true, 
+      holidayNotifications: [],
+      // Тут, можливо, був clarification, але опустимо його, якщо він не використовується в логіці
+    };
+  }
+  
+  const isDirectOrder = isOrderMessage(text);
+
+  // 4. Створення та ПЕРЕВІРКА нового текстового замовлення
+  if (isDirectOrder) {
+    const profile = userProfiles[chatId];
+    
+    // Ініціалізація відстеження замовлення
+    // initOrderTracking(chatId); // Якщо ця функція ще є, краще її викликати тут
+    profile.lastOrder = text;
+    profile.orderType = 'text';
+    profile.orderStatus = 'collecting';
+    profile.lastOrderTime = Date.now();
+    
+    // 🔥 ЛОГІКА ПЕРЕВІРКИ ДЕТАЛЕЙ ІЗ СТАРОГО handleDirectOrder
+    const hasQuantity = /\d+/.test(text) || /штук|шт\b/i.test(text);
+    const hasSpecificType = /(латексні|фольговані|цифри|фігури|ходячі|серця|зірки|однотонні|з малюнком|з конфеті|агат|браш|з бантиками)/i.test(text);
+    const hasDate = /(сьогодні|завтра|післязавтра|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})/i.test(text);
+    const hasStore = /(оболонь|теремки|самовивіз)/i.test(text);
+
+    const detailsCount = [hasQuantity, hasSpecificType, hasDate, hasStore].filter(Boolean).length;
+    const hasEnoughDetails = detailsCount >= 2;
+
+    if (!hasEnoughDetails) {
+      let clarificationMessage = "📝 Я зафіксував ваше замовлення. Для оформлення, будь ласка, уточніть:\n\n";
+      if (!hasQuantity) clarificationMessage += "📦 Скільки кульок потрібно?\n";
+      if (!hasSpecificType) clarificationMessage += "🎈 Які саме кульки: латексні, фольговані, цифри?\n";
+      if (!hasDate) clarificationMessage += "📅 На коли потрібна доставка?\n";
+      if (!hasStore) clarificationMessage += "📍 Доставка чи самовивіз (з якого магазину)?\n";
+
+      clarificationMessage += "\n💡 Ви можете додати деталі зараз або натиснути кнопку '✅ Відправити замовлення менеджеру' щоб відправити те що є.\n";
+      clarificationMessage += "⏰ У вас є 5 хвилин для уточнень.";
+
+      await bot.sendMessage(chatId, clarificationMessage, orderCollectionMenu);
       
+      setAutoFinalize(chatId, userName); // Встановлюємо таймер
+      return;
+    }
+
+    // Якщо замовлення повне → одразу готове до відправки
+    profile.orderStatus = 'ready';
+
+    await bot.sendMessage(chatId,
+      "✅ Ваше замовлення готове до відправки!\n\n" +
+      "🎯 Натисніть '✅ Відправити замовлення менеджеру' щоб відправити зараз\n" +
+      "📝 Або додайте ще деталі протягом 5 хвилин\n" +
+      "⏰ Замовлення автоматично відправиться менеджеру через 5 хвилин",
+      orderCollectionMenu
+    );
+    
+    setAutoFinalize(chatId, userName);
+    return;
+  }
+  
+  // 5. Обробка профілю / пошуку
+  if (userStates[chatId]?.step?.startsWith('profile_')) {
+    await handleProfileInput(chatId, text, userStates[chatId].step);
+    return;
+  }
+  if (userStates[chatId]?.step === 'search') {
+    await handleSearch(chatId, text);
+    delete userStates[chatId];
+    return;
+  }
+  
+  // 6. Обробка решти повідомлень (AI)
+  await handleGeneralMessage(chatId, text, userName);
+}
+  // ===================== ОБРОБНИК МЕНЮ (НОВИЙ ASYNC) =====================
+// Ця функція обробляє натискання кнопок головного меню та кнопки відправки замовлення.
+async function handleMenuActions(chatId, text, userName) {
+  const profile = userProfiles[chatId]; 
+
+  switch (text) {
+    case '🏠 Головне меню':
+      await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
+      return true;
+
     case '🛒 Каталог':
       await bot.sendMessage(chatId, '🛒 Каталог товарів MagicAir:\n\nОберіть категорію:', catalogMenu);
-      return;
+      return true;
 
     case '❓ FAQ':
       await sendInteractiveFAQ(chatId);
-      return;
+      return true;
 
     case '📱 Сайт':
       await bot.sendMessage(chatId,
         '🌍 Наш сайт:\n👉 https://magicair.com.ua\n\n🛒 Тут ви можете переглянути повний каталог та оформити замовлення!',
         { reply_markup: { inline_keyboard: [
-            [{ text: '🛒 Відкрити сайт', url: 'https://magicair.com.ua' }],
-            [{ text: '🏠 Головне меню', callback_data: 'main_menu' }]
+          [{ text: '🛒 Відкрити сайт', url: 'https://magicair.com.ua' }],
+          [{ text: '🏠 Головне меню', callback_data: 'main_menu' }]
         ]}}
       );
-      return;
+      return true;
 
     case '📞 Контакти':
       await sendContacts(chatId);
-      return;
+      return true;
 
     case '🔍 Пошук':
       userStates[chatId] = { step: 'search' };
       await bot.sendMessage(chatId, '🔍 Введіть назву товару для пошуку:');
-      return;
+      return true;
 
-     case '💬 Менеджер':
-    if (isWorkingHours()) {
-      await startPreFilter(chatId, userName);
-    } else {
-      await bot.sendMessage(chatId,
-        `⏰ Ви звернулися в неробочий час.\n\n` +
-        `Графік роботи менеджерів: **з ${WORKING_HOURS.start}:00 до ${WORKING_HOURS.end}:00**.\n\n` +
-        `Чекаємо на вас завтра в робочий час!`,
-        { parse_mode: 'Markdown', ...mainMenu }
-      );
-    }
-    return;
-
-  case '👤 Профіль':
-    await showProfile(chatId);
-    return;
-
-  // 🔥 НОВЫЙ CASE ДЛЯ КНОПКИ "Відправити замовлення"
-  case '✅ Відправити замовлення менеджеру': {
-    const profile = userProfiles[chatId];
-    if (profile) {
-      if (profile.orderStatus === 'sent') {
-        await bot.sendMessage(
-          chatId,
-          "⚠️ Ваше замовлення вже було відправлено менеджеру. Створіть нове замовлення, якщо потрібно.",
-          mainMenu
-        );
-      } else if (profile.orderStatus === 'collecting' || profile.orderStatus === 'ready') {
-        await finalizeAndSendOrder(chatId, userName);
+    case '💬 Менеджер':
+      if (isWorkingHours()) {
+        await startPreFilter(chatId, userName);
       } else {
-        await bot.sendMessage(
-          chatId,
-          "У вас немає активного замовлення для відправки. Створіть нове замовлення.",
-          mainMenu
+        await bot.sendMessage(chatId,
+          `⏰ Ви звернулися в неробочий час.\n\n` +
+          `Графік роботи менеджерів: **з ${WORKING_HOURS.start}:00 до ${WORKING_HOURS.end}:00**.\n\n` +
+          `Чекаємо на вас завтра в робочий час!`,
+          { parse_mode: 'Markdown', ...mainMenu }
         );
       }
+      return true;
+
+    case '👤 Профіль':
+      await showProfile(chatId);
+      return true;
+
+    // 🔥 Обробка кнопки відправки замовлення
+    case '✅ Відправити замовлення менеджеру': {
+      if (profile) {
+        if (profile.orderStatus === 'sent') {
+          await bot.sendMessage(
+            chatId,
+            "⚠️ Ваше замовлення вже було відправлено менеджеру. Створіть нове замовлення, якщо потрібно.",
+            mainMenu
+          );
+        } else if (profile.orderStatus === 'collecting' || profile.orderStatus === 'ready') {
+          await finalizeAndSendOrder(chatId, userName);
+        } else {
+          await bot.sendMessage(
+            chatId,
+            "У вас немає активного замовлення для відправки. Створіть нове замовлення.",
+            mainMenu
+          );
+        }
+        return true; 
+      }
+      return true; 
     }
-    return;
   }
-} // ✅ закрываем switch (text)
+  // Повертаємо false, якщо текст не є командою меню
+  return false;
+}
 
   // ========= ДАЛЕЕ ОБРАБОТКА ПРОФИЛЯ / ПОИСКА =========
   if (userStates[chatId]?.step?.startsWith('profile_')) {
@@ -3880,6 +3931,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
