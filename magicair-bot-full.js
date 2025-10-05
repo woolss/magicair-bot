@@ -653,11 +653,15 @@ bot.on('message', async (msg) => {
   const userName = msg.from.first_name || 'Клієнт';
   const text = msg.text || '';
 // 🚫 Якщо замовлення вже відправлено і чат ще не почався
-  if (userProfiles[chatId]?.orderLocked && !Object.values(activeManagerChats).includes(chatId)) {
-    await bot.sendMessage(chatId, "🕓 Очікуйте відповіді менеджера, будь ласка 🙏");
-    return;
-  }
-
+  const profile = userProfiles[chatId];
+if (
+  profile?.orderLocked === true &&
+  profile?.orderStatus === 'sent' && // ✅ заказ действительно отправлен
+  !Object.values(activeManagerChats).includes(chatId) // не в чате
+) {
+  await bot.sendMessage(chatId, "🕓 Очікуйте відповіді менеджера, будь ласка 🙏");
+  return;
+}
 
   // 🚫 Антиспам
   const rateStatus = checkRateLimit(chatId);
@@ -3830,5 +3834,6 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
