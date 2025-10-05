@@ -758,9 +758,14 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const userName = msg.from.first_name || 'Клієнт';
   const text = msg.text || '';
+
+  // 🪵 ЛОГ кожного повідомлення клієнта/менеджера
+  console.log(`📨 ${chatId} (${userName}): ${text || '(без тексту)'}`);
+
   // 🧹 Якщо користувач відкрив головне меню — очищаємо попереднє замовлення
   if (text === "🏠 Головне меню" || /^(\/start|меню|головне меню)$/i.test(text)) {
     await resetClientOrderState(chatId);
+    // ⚠️ Не перериваємо виконання, щоб кнопки меню працювали далі
   }
 
   // 🚫 Антиспам
@@ -797,7 +802,6 @@ bot.on('message', async (msg) => {
     await handleManagerMessage(msg);
     return;
   }
-
   // 🖼 Фото від клієнта
   if (msg.photo) {
     const managerId = Object.keys(activeManagerChats).find(
@@ -3914,6 +3918,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
