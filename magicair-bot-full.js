@@ -647,253 +647,45 @@ bot.onText(/\/start/, async (msg) => {
   }
 });
 
-// ========== MESSAGES ==========
+// ========== MESSAGES (ФИНАЛЬНЫЙ ЧИСТЫЙ БЛОК) ==========
 bot.on('message', async (msg) => {
-  const chatId = msg.chat.id;
-  const userName = msg.from.first_name || 'Клієнт';
-  const text = msg.text || '';
-// 🚫 Якщо замовлення вже відправлено і чат ще не почався
-  const profile = userProfiles[chatId];
-if (
-  profile?.orderLocked === true &&
-  profile?.orderStatus === 'sent' && // ✅ заказ действительно отправлен
-  !Object.values(activeManagerChats).includes(chatId) // не в чате
-) {
-  await bot.sendMessage(chatId, "🕓 Очікуйте відповіді менеджера, будь ласка 🙏");
-  return;
-}
+    const chatId = msg.chat.id;
+    const userName = msg.from.first_name || 'Клієнт';
+    const text = msg.text || '';
 
-  // 🚫 Антиспам
-  const rateStatus = checkRateLimit(chatId);
-  if (!rateStatus.allowed) {
-    await bot.sendMessage(
-      chatId,
-      `🚫 Ви надто часто надсилаєте повідомлення. Спробуйте знову через ${rateStatus.waitMinutes} хвилин.`
-    ).catch(() => {});
-    return;
-  }
-
-  // 👨‍💼 Якщо це менеджер
-  if (isManager(chatId)) {
-    const managerId = chatId;
-    const clientId = activeManagerChats[managerId];
-
-    // 🖼 Фото від менеджера
-    if (msg.photo) {
-      if (clientId) {
-        const fileId = msg.photo[msg.photo.length - 1].file_id;
-        const caption = msg.caption || '';
-        await bot.sendPhoto(clientId, fileId, {
-          caption: `👨‍💼 ${getManagerName(managerId)}: ${caption || '(без коментаря)'}`
-        });
-        await logMessage(managerId, clientId, `[ФОТО] ${caption}`, 'manager');
-      } else {
-        await bot.sendMessage(managerId, 'ℹ️ Спочатку оберіть клієнта, щоб надіслати фото.');
-      }
-      return; // ⚠️ Не вважаємо це замовленням
+    // 🚫 Антиспам
+    const rateStatus = checkRateLimit(chatId);
+    if (!rateStatus.allowed) {
+        await bot.sendMessage(
+            chatId,
+            `🚫 Ви надто часто надсилаєте повідомлення. Спробуйте знову через ${rateStatus.waitMinutes} хвилин.`
+        ).catch(() => {});
+        return;
     }
 
-    // Текстове повідомлення від менеджера
-    await handleManagerMessage(msg);
-    return;
-  }
-
-  // 🖼 Фото від клієнта
-  if (msg.photo) {
-    const managerId = Object.keys(activeManagerChats).find(
-      mId => activeManagerChats[mId] == chatId
-    );
-    const fileId = msg.photo[msg.photo.length - 1].file_id;
-    const caption = msg.caption || '';
-
-    if (managerId) {
-      // Якщо клієнт у чаті з менеджером → пересилаємо фото
-      await bot.sendPhoto(managerId, fileId, {
-        caption: `📷 ${userName} (${chatId}):\n${caption || '(без коментаря)'}`
-      });
-      await bot.sendMessage(chatId, '📸 Фото відправлено менеджеру ✅');
-      await logMessage(chatId, managerId, `[ФОТО] ${caption}`, 'client');
-      return; // ⚠️ Не створюємо нове замовлення
+    // 👨‍💼 Если это менеджер
+    if (isManager(chatId)) {
+        await handleManagerMessage(msg);
+        return;
     }
 
-    // Інакше — нове фото-замовлення
-    return await handlePhotoMessage(msg);
-  }
-
-  // ⚙️ Команди
-  if (text && text.startsWith('/')) {
-    if (text === '/end') {
-      await handleEndCommand(chatId);
-    }
-    return;
-  }
-
-  console.log(`📨 ${chatId} (${userName}): ${text}`);
-
-  try {
-    // 💬 Якщо клієнт зараз у чаті з менеджером
-    const managerId = Object.keys(activeManagerChats).find(
-      mId => activeManagerChats[mId] == chatId
-    );
-
-    if (managerId) {
-      // 🏠 Кнопка "Головне меню" → завершення чату
-      if (text === '🏠 Головне меню') {
-        delete activeManagerChats[managerId];
-        delete userStates[chatId];
-
-        await bot.sendMessage(
-          chatId,
-          '✅ Чат завершено. Ви повернулись до головного меню.',
-          mainMenu
-        );
-        await bot.sendMessage(
-          managerId,
-          `❌ Клієнт ${userName} (${chatId}) завершив чат.`,
-          managerMenu
-        );
-        return;
-      }
-
-      // 🔁 Пересилання повідомлення менеджеру
-      await bot.sendMessage(managerId, `💬 ${userName} (${chatId}): ${text}`);
-      await logMessage(chatId, managerId, text, 'client');
-      console.log(`💬 Повідомлення від ${chatId} переслано менеджеру ${managerId}`);
-      return;
-    }
-    
-    // 1️⃣ НОВЫЙ БЛОК: ОБРАБОТКА СТАНДАРТНЫХ КНОПОК МЕНЮ (БЕЗ БЛОКИРОВКИ)
-    switch (text) {
-        case '🏠 Головне меню':
-            // Очистка всех состояний блокировки при возврате в Главное меню
-            if (userProfiles[chatId]) {
-                userProfiles[chatId].orderLocked = false;
-                delete userProfiles[chatId].orderStatus;
-                delete userProfiles[chatId].pendingPhotoOrder;
-            }
-            await bot.sendMessage(chatId, 'Ви повернулись до головного меню. Оберіть дію:', mainMenu);
-            return;
-            
-        case '🛒 Каталог':
-            await bot.sendMessage(chatId, '✨ Оберіть категорію кульок, що цікавить:', catalogMenu);
-            return;
-            
-        case '❓ FAQ':
-            await bot.sendMessage(chatId, '📚 Часті запитання:', faqMenu);
-            return;
-
-        case '📞 Контакти':
-            await bot.sendMessage(chatId, 
-                '📍 Ми знаходимось в Києві, працюємо з 9:00 до 21:00.\n' + 
-                '📞 Зв\'яжіться з нами: +380991234567\n' + 
-                '🌐 Наш сайт: [magicair.com.ua](https://magicair.com.ua/)'
-            );
-            return;
-            
-        case '👤 Профіль':
-            await bot.sendMessage(chatId, '📋 Ваш профіль:', buildProfileMenu(chatId)); 
-            return;
-            
-        case '💬 Менеджер':
-            await bot.sendMessage(chatId, '💬 Щоб швидко передати ваше питання менеджеру, оберіть тему:', prefilterMenu); 
-            return;
-            
-        case '📱 Сайт':
-        case '🔍 Пошук':
-            await bot.sendMessage(chatId, `🌐 Наш сайт: [magicair.com.ua](https://magicair.com.ua/)`);
-            return;
+    // ⚙️ Команды
+    if (text && text.startsWith('/')) {
+        if (text === '/end') {
+            await handleEndCommand(chatId);
+        }
+        return;
     }
 
-    // 🧩 Якщо менеджер ще не підключився
-const profile = userProfiles[chatId];
-const lastOrderTime = profile?.lastOrderTime;
+    console.log(`📨 ${chatId} (${userName}): ${text}`);
 
-// 🚫 Якщо замовлення вже відправлено або чат завершено — не приймаємо уточнення
-if (!profile || profile.orderStatus === 'sent' || userStates[chatId]?.step === 'manager_chat_end') {
-  await handleClientMessage(msg);
-  return;
-}
-
-// 📷 Фото-замовлення — дозволяємо тільки одне уточнення
-if (profile?.pendingPhotoOrder) {
-  const order = profile.pendingPhotoOrder;
-    
-  // 1. ПЕРЕХВАТ КНОПКИ ОТПРАВКИ ЗАКАЗА
-if (text === "✅ Відправити замовлення менеджеру") {
-    // Проверяем, что есть хотя бы фото или уже добавлено уточнение
-    if (!order.fileId) { // ✅ ИСПРАВЛЕНО: используем fileId, которое сохраняется в handlePhotoMessage
-      await bot.sendMessage(chatId, "❌ Помилка замовлення. Спробуйте надіслати фото знову.");
-      return;
+    try {
+        // 🔥 ВСЯ ЛОГИКА КЛИЕНТА ВЫНЕСЕНА В handleClientMessage
+        await handleClientMessage(msg);
+    } catch (error) {
+        console.error('⚠ Message error:', error);
+        await bot.sendMessage(chatId, '⚠ Помилка. Спробуйте /start').catch(() => {});
     }
-    
-    // Вызываем отправку заказа, которая должна установить profile.orderLocked = true
-    await finalizeAndSendOrder(chatId, userName); 
-    return;
-}
-    
-  // 2. ПРИЕМ УТОЧНЕНИЯ (если caption еще нет)
-  // ✏️ Якщо фото без підпису → приймаємо одне уточнення
-  if (!order.caption && text && text !== "🏠 Головне меню") {
-    order.caption = text;
-
-    await bot.sendMessage(
-      chatId,
-      `✅ Уточнення додано: "${text}"\n\nНатисніть "✅ Відправити замовлення менеджеру", щоб відправити.`,
-      {
-        reply_markup: {
-          keyboard: [
-            [{ text: "✅ Відправити замовлення менеджеру" }],
-            [{ text: "🏠 Головне меню" }]
-          ],
-          resize_keyboard: true
-        }
-      }
-    );
-    return;
-  }
-    
-  // 3. БЛОКИРОВКА ПРИ ПОПЫТКЕ ГОВОРИТЬ ПОСЛЕ УТОЧНЕНИЯ (Fix 1: Ложная блокировка)
-  // Если у нас уже есть caption (уточнение), но кнопку отправки еще не нажали,
-  // просто просим нажать на кнопку, чтобы не попадать в логику AI/handleClientMessage
-  if (order.caption) {
-    await bot.sendMessage(chatId, "💬 Будь ласка, натисніть '✅ Відправити замовлення менеджеру' або '🏠 Головне меню'.");
-    return;
-  }
-
-  // 🔄 Если пользователь пишет что-то, что не является уточнением, и заказ еще не отправлен
-  await handleClientMessage(msg); 
-  return;
-}
-
-// 🕒 Текстове замовлення — дозволяємо уточнення протягом 60 секунд
-// Перевіряємо: 1) чи є профіль, 2) чи є orderType, 3) чи не минуло 60 секунд
-else if (profile?.orderType === 'text' && lastOrderTime && Date.now() - lastOrderTime < 60 * 1000) {
-  // 🟢 ЛОГИКА УТОЧНЕННЯ ТЕКСТОВОГО ЗАМОВЛЕННЯ (ПЕРЕЗАПИС)
-  
-  // 1. Обновляем текст заказа, перезаписывая предыдущий
-  profile.lastOrder = text;
-  
-  // 2. Сбрасываем таймер авто-отправки (продлеваем на 5 минут)
-  setAutoFinalize(chatId, userName); 
-  
-  // 3. Уведомляем клиента
-  await bot.sendMessage(chatId, 
-    `✅ Ваш попередній текст замовлення оновлено.\n\n` +
-    `📝 Новий текст: "${text}"\n` + 
-    `⏰ Замовлення буде відправлено автоматично, або натисніть "✅ Відправити замовлення менеджеру".`,
-    orderCollectionMenu
-  );
-  
-  return;
-}
-    
-    // 🧠 Усі інші повідомлення → AI / створення нового замовлення
-    await handleClientMessage(msg);
-
-  } catch (error) {
-    console.error('⚠ Message error:', error);
-    await bot.sendMessage(chatId, '⚠ Помилка. Спробуйте /start').catch(() => {});
-  }
 });
 
 // ==================== ОБРОБКА КНОПОК INLINE ====================
@@ -1402,7 +1194,7 @@ async function handleClientMessage(msg) {
   // 6. Обробка решти повідомлень (AI)
   await handleGeneralMessage(chatId, text, userName);
 }
-  // ===================== ОБРОБНИК МЕНЮ (НОВИЙ ASYNC) =====================
+// ===================== ОБРОБНИК МЕНЮ =====================
 // Ця функція обробляє натискання кнопок головного меню та кнопки відправки замовлення.
 async function handleMenuActions(chatId, text, userName) {
   const profile = userProfiles[chatId]; 
@@ -3931,6 +3723,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
