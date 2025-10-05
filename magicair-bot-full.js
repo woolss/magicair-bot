@@ -2531,47 +2531,46 @@ async function forwardToClient(clientId, text) {
 
 // ==================== ОБНОВЛЕННАЯ ФУНКЦІЯ ЗАВЕРШЕННЯ ЧАТА ====================
 async function handleEndCommand(chatId) {
-  if (userStates[chatId]?.step === 'manager_chat') {
-    const managerId = userStates[chatId].managerId;
+  if (userStates[chatId]?.step === 'manager_chat') {
+    const managerId = userStates[chatId].managerId;
 
-    // 🔥 Сразу очищаем состояния
-    delete activeManagerChats[managerId];
-    delete userStates[chatId];
+    // 🔥 Сразу очищаем состояния
+    delete activeManagerChats[managerId];
+    delete userStates[chatId];
 
-    // 🧹 Очищаем профиль клиента
-    if (userProfiles[chatId]) {
-      delete userProfiles[chatId].pendingPhotoOrder;
-      delete userProfiles[chatId].lastPhotoOrder;
-      delete userProfiles[chatId].lastOrder;
-      delete userProfiles[chatId].orderStatus;
-      delete userProfiles[chatId].orderType;
-      delete userProfiles[chatId].orderLocked; // 🧹 Разблокируем уточнения
-      userProfiles[chatId].clarifications = [];
-    }
+    // 🧹 Очищаем профиль клиента
+    if (userProfiles[chatId]) {
+      delete userProfiles[chatId].pendingPhotoOrder;
+      delete userProfiles[chatId].lastPhotoOrder;
+      delete userProfiles[chatId].lastOrder;
+      delete userProfiles[chatId].orderStatus;
+      delete userProfiles[chatId].orderType;
+      delete userProfiles[chatId].orderLocked; // 🧹 Разблокируем уточнения
+      userProfiles[chatId].clarifications = [];
+    }
 
-    // Удаляем кнопку у менеджера
-    await removeManagerNotificationButton(managerId, chatId);
+    // Удаляем кнопку у менеджера
+    await removeManagerNotificationButton(managerId, chatId);
 
-    // Уведомляем менеджера
-    if (managerId) {
-      await bot.sendMessage(managerId, `✅ Клієнт завершив чат.`, managerMenu);
-    }
+    // Уведомляем менеджера
+    if (managerId) {
+      await bot.sendMessage(managerId, `✅ Клієнт завершив чат.`, managerMenu);
+    }
 
-    // Уведомляем клиента
-    if (String(chatId).startsWith('site-')) {
-      await sendToWebClient(chatId, '✅ Чат завершено.');
-    } else {
-      await bot.sendMessage(chatId, '✅ Чат завершено. Повертаємось до головного меню.', mainMenu);
-    }
+    // Уведомляем клиента
+    if (String(chatId).startsWith('site-')) {
+      await sendToWebClient(chatId, '✅ Чат завершено.');
+    } else {
+      await bot.sendMessage(chatId, '✅ Чат завершено. Повертаємось до головного меню.', mainMenu);
+    }
 
-    return;
-  } else if (isManager(chatId)) {
-    await endManagerChat(chatId);
-  } else {
-    await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
-  }
+    return;
+  } else if (isManager(chatId)) {
+    await endManagerChat(chatId);
+  } else {
+    await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
+  }
 }
-
 // ==================== СПРОЩЕНА ФУНКЦІЯ (БЕЗ ВИДАЛЕННЯ КНОПОК) ====================
 async function removeManagerNotificationButton(managerId, clientId) {
   // Просто логируем, нічого не змінюємо
@@ -3881,6 +3880,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
