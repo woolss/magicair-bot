@@ -1275,21 +1275,6 @@ async function handleMenuActions(chatId, text, userName) {
   return false;
 }
 
-  // ========= ДАЛЕЕ ОБРАБОТКА ПРОФИЛЯ / ПОИСКА =========
-  if (userStates[chatId]?.step?.startsWith('profile_')) {
-    await handleProfileInput(chatId, text, userStates[chatId].step);
-    return;
-  }
-  if (userStates[chatId]?.step === 'search') {
-    await handleSearch(chatId, text);
-    delete userStates[chatId];
-    return;
-  }
-
-  // ========= ОСТАЛЬНЫЕ СООБЩЕНИЯ =========
-  await handleGeneralMessage(chatId, text, userName);
-}
-
 // ===================== MANAGER HANDLER =====================
 async function handleManagerMessage(msg) {
   const managerId = msg.chat.id;
@@ -3723,6 +3708,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
