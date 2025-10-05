@@ -721,45 +721,87 @@ if (
   }
 
   // ⚙️ Команди
-  if (text && text.startsWith('/')) {
-    if (text === '/end') {
-      await handleEndCommand(chatId);
-    }
-    return;
-  }
+  if (text && text.startsWith('/')) {
+    if (text === '/end') {
+      await handleEndCommand(chatId);
+    }
+    return;
+  }
 
-  console.log(`📨 ${chatId} (${userName}): ${text}`);
+  console.log(`📨 ${chatId} (${userName}): ${text}`);
 
-  try {
-    // 💬 Якщо клієнт зараз у чаті з менеджером
-    const managerId = Object.keys(activeManagerChats).find(
-      mId => activeManagerChats[mId] == chatId
-    );
+  try {
+    // 💬 Якщо клієнт зараз у чаті з менеджером
+    const managerId = Object.keys(activeManagerChats).find(
+      mId => activeManagerChats[mId] == chatId
+    );
 
-    if (managerId) {
-      // 🏠 Кнопка "Головне меню" → завершення чату
-      if (text === '🏠 Головне меню') {
-        delete activeManagerChats[managerId];
-        delete userStates[chatId];
+    if (managerId) {
+      // 🏠 Кнопка "Головне меню" → завершення чату
+      if (text === '🏠 Головне меню') {
+        delete activeManagerChats[managerId];
+        delete userStates[chatId];
 
-        await bot.sendMessage(
-          chatId,
-          '✅ Чат завершено. Ви повернулись до головного меню.',
-          mainMenu
-        );
-        await bot.sendMessage(
-          managerId,
-          `❌ Клієнт ${userName} (${chatId}) завершив чат.`,
-          managerMenu
-        );
-        return;
-      }
+        await bot.sendMessage(
+          chatId,
+          '✅ Чат завершено. Ви повернулись до головного меню.',
+          mainMenu
+        );
+        await bot.sendMessage(
+          managerId,
+          `❌ Клієнт ${userName} (${chatId}) завершив чат.`,
+          managerMenu
+        );
+        return;
+      }
 
-      // 🔁 Пересилання повідомлення менеджеру
-      await bot.sendMessage(managerId, `💬 ${userName} (${chatId}): ${text}`);
-      await logMessage(chatId, managerId, text, 'client');
-      console.log(`💬 Повідомлення від ${chatId} переслано менеджеру ${managerId}`);
-      return;
+      // 🔁 Пересилання повідомлення менеджеру
+      await bot.sendMessage(managerId, `💬 ${userName} (${chatId}): ${text}`);
+      await logMessage(chatId, managerId, text, 'client');
+      console.log(`💬 Повідомлення від ${chatId} переслано менеджеру ${managerId}`);
+      return;
+    }
+    
+    // 1️⃣ НОВЫЙ БЛОК: ОБРАБОТКА СТАНДАРТНЫХ КНОПОК МЕНЮ (БЕЗ БЛОКИРОВКИ)
+    switch (text) {
+        case '🏠 Головне меню':
+            // Очистка всех состояний блокировки при возврате в Главное меню
+            if (userProfiles[chatId]) {
+                userProfiles[chatId].orderLocked = false;
+                delete userProfiles[chatId].orderStatus;
+                delete userProfiles[chatId].pendingPhotoOrder;
+            }
+            await bot.sendMessage(chatId, 'Ви повернулись до головного меню. Оберіть дію:', mainMenu);
+            return;
+            
+        case '🛒 Каталог':
+            await bot.sendMessage(chatId, '✨ Оберіть категорію кульок, що цікавить:', catalogMenu);
+            return;
+            
+        case '❓ FAQ':
+            await bot.sendMessage(chatId, '📚 Часті запитання:', faqMenu);
+            return;
+
+        case '📞 Контакти':
+            await bot.sendMessage(chatId, 
+                '📍 Ми знаходимось в Києві, працюємо з 9:00 до 21:00.\n' + 
+                '📞 Зв\'яжіться з нами: +380991234567\n' + 
+                '🌐 Наш сайт: [magicair.com.ua](https://magicair.com.ua/)'
+            );
+            return;
+            
+        case '👤 Профіль':
+            await bot.sendMessage(chatId, '📋 Ваш профіль:', buildProfileMenu(chatId)); 
+            return;
+            
+        case '💬 Менеджер':
+            await bot.sendMessage(chatId, '💬 Щоб швидко передати ваше питання менеджеру, оберіть тему:', prefilterMenu); 
+            return;
+            
+        case '📱 Сайт':
+        case '🔍 Пошук':
+            await bot.sendMessage(chatId, `🌐 Наш сайт: [magicair.com.ua](https://magicair.com.ua/)`);
+            return;
     }
 
     // 🧩 Якщо менеджер ще не підключився
@@ -3834,6 +3876,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
