@@ -818,18 +818,18 @@ if (!profile || profile.orderStatus === 'sent' || userStates[chatId]?.step === '
 if (profile?.pendingPhotoOrder) {
   const order = profile.pendingPhotoOrder;
     
-  // 1. ПЕРЕХВАТ КНОПКИ ОТПРАВКИ ЗАКАЗА (Fix 2: Заказ не доходил)
-  if (text === "✅ Відправити замовлення менеджеру") {
-      // Проверяем, что есть хотя бы фото или уже добавлено уточнение
-      if (!order.photoId) { // Проверка, что фото вообще есть
-        await bot.sendMessage(chatId, "❌ Помилка замовлення. Спробуйте надіслати фото знову.");
-        return;
-      }
-      
-      // Вызываем отправку заказа, которая должна установить profile.orderLocked = true
-      await finalizeAndSendOrder(chatId, userName); 
+  // 1. ПЕРЕХВАТ КНОПКИ ОТПРАВКИ ЗАКАЗА
+if (text === "✅ Відправити замовлення менеджеру") {
+    // Проверяем, что есть хотя бы фото или уже добавлено уточнение
+    if (!order.fileId) { // ✅ ИСПРАВЛЕНО: используем fileId, которое сохраняется в handlePhotoMessage
+      await bot.sendMessage(chatId, "❌ Помилка замовлення. Спробуйте надіслати фото знову.");
       return;
-  }
+    }
+    
+    // Вызываем отправку заказа, которая должна установить profile.orderLocked = true
+    await finalizeAndSendOrder(chatId, userName); 
+    return;
+}
     
   // 2. ПРИЕМ УТОЧНЕНИЯ (если caption еще нет)
   // ✏️ Якщо фото без підпису → приймаємо одне уточнення
@@ -3892,6 +3892,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
