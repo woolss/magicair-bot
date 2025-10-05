@@ -724,6 +724,8 @@ bot.on('polling_error', (error) => {
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const userName = msg.from.first_name || 'друже';
+  await resetClientOrderState(chatId);
+
   console.log(`▶️ START: ${chatId}, Managers: ${MANAGERS.join(',')}`);
 
   try {
@@ -756,6 +758,10 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const userName = msg.from.first_name || 'Клієнт';
   const text = msg.text || '';
+  // 🧹 Якщо користувач відкрив головне меню — очищаємо попереднє замовлення
+  if (text === "🏠 Головне меню" || /^(\/start|меню|головне меню)$/i.test(text)) {
+    await resetClientOrderState(chatId);
+  }
 
   // 🚫 Антиспам
   const rateStatus = checkRateLimit(chatId);
@@ -2590,6 +2596,20 @@ async function handleEndCommand(chatId) {
     await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
   }
 }
+// ==================== ОЧИСТКА АКТИВНОГО ЗАМОВЛЕННЯ ====================
+async function resetClientOrderState(chatId) {
+  const profile = userProfiles[chatId];
+  if (!profile) return;
+
+  delete profile.pendingPhotoOrder;
+  delete profile.lastPhotoOrder;
+  delete profile.lastOrder;
+  delete profile.clarifications;
+  delete profile.orderType;
+  delete profile.orderStatus;
+
+  console.log(`🧹 Замовлення клієнта ${chatId} очищено (повернення в головне меню)`);
+}
 
 // ==================== СПРОЩЕНА ФУНКЦІЯ (БЕЗ ВИДАЛЕННЯ КНОПОК) ====================
 async function removeManagerNotificationButton(managerId, clientId) {
@@ -3894,6 +3914,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
