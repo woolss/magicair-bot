@@ -835,7 +835,15 @@ bot.on('message', async (msg) => {
         );
         return;
       }
-
+      // 🧹 Повна очистка даних після виходу клієнта в головне меню
+     if (userProfiles[chatId]) {
+      delete userProfiles[chatId].pendingPhotoOrder;
+      delete userProfiles[chatId].lastPhotoOrder;
+      delete userProfiles[chatId].lastOrder;
+      delete userProfiles[chatId].orderStatus;
+      delete userProfiles[chatId].orderType;
+      userProfiles[chatId].clarifications = [];
+     }
       // 🔁 Пересилання повідомлення менеджеру
       await bot.sendMessage(managerId, `💬 ${userName} (${chatId}): ${text}`);
       await logMessage(chatId, managerId, text, 'client');
@@ -2537,6 +2545,16 @@ async function handleEndCommand(chatId) {
     delete activeManagerChats[managerId];
     delete userStates[chatId];
 
+    // 🧹 Очищаем профиль клиента, щоб бот не плутав уточнення після закінчення чату
+    if (userProfiles[chatId]) {
+      delete userProfiles[chatId].pendingPhotoOrder;
+      delete userProfiles[chatId].lastPhotoOrder;
+      delete userProfiles[chatId].lastOrder;
+      delete userProfiles[chatId].orderStatus;
+      delete userProfiles[chatId].orderType;
+      userProfiles[chatId].clarifications = [];
+    }
+
     // Удаляем кнопку у менеджера
     await removeManagerNotificationButton(managerId, chatId);
 
@@ -2559,6 +2577,7 @@ async function handleEndCommand(chatId) {
     await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
   }
 }
+
 // ==================== СПРОЩЕНА ФУНКЦІЯ (БЕЗ ВИДАЛЕННЯ КНОПОК) ====================
 async function removeManagerNotificationButton(managerId, clientId) {
   // Просто логируем, нічого не змінюємо
@@ -3862,6 +3881,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
