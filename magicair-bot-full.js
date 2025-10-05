@@ -569,8 +569,20 @@ function isOrderClarification(text, chatId) {
   if (!text) return false;
   const t = text.toLowerCase();
 
-  if (!isOrderContext(chatId)) return false;
+  const profile = userProfiles[chatId];
+  if (!profile || profile.orderStatus === 'sent' || !profile.pendingPhotoOrder) {
+    return false;
+  }
 
+  // 🚫 Якщо клієнт натискає будь-яку кнопку меню (має емоджі або коротку назву)
+  if (
+    /^[/#]|^🏠|^📦|^🎈|^🎁|^💬|^📞|^📍|^🛒|^❓|^⚙️|^🌐|^💡|^🔥|^🔙/.test(text) ||
+    ["меню", "головне меню", "каталог", "faq", "сайт", "акції", "акция", "акции", "контакти"].some(p => t.includes(p))
+  ) {
+    return false;
+  }
+
+  // Ключові слова уточнень
   const clarificationKeywords = [
     "латексні", "фольговані", "різнокольорові", "однотонні",
     "з малюнком", "з конфеті", "агат", "браш", "з бантиками",
@@ -588,6 +600,7 @@ function isOrderClarification(text, chatId) {
 
   return hasKeyword || hasPhrase;
 }
+
 // ==================== УТОЧНЕННЯ ДО ФОТО-ЗАМОВЛЕННЯ ====================
 async function handlePhotoClarification(chatId, text, userName) {
   try {
@@ -3881,6 +3894,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
