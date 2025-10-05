@@ -652,6 +652,12 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const userName = msg.from.first_name || 'Клієнт';
   const text = msg.text || '';
+// 🚫 Якщо замовлення вже відправлено і чат ще не почався
+  if (userProfiles[chatId]?.orderLocked && !Object.values(activeManagerChats).includes(chatId)) {
+    await bot.sendMessage(chatId, "🕓 Очікуйте відповіді менеджера, будь ласка 🙏");
+    return;
+  }
+
 
   // 🚫 Антиспам
   const rateStatus = checkRateLimit(chatId);
@@ -764,14 +770,37 @@ if (!profile || profile.orderStatus === 'sent' || userStates[chatId]?.step === '
 
 // 📷 Фото-замовлення — дозволяємо тільки одне уточнення
 if (profile?.pendingPhotoOrder) {
-  if (
-    text !== '✅ Відправити замовлення менеджеру' &&
-    text !== '🏠 Головне меню' &&
-    (!profile.clarifications || profile.clarifications.length === 0)
-  ) {
-    await handlePhotoClarification(chatId, text, userName);
+  const order = profile.pendingPhotoOrder;
+
+  // 🚫 Якщо замовлення вже відправлено — блокуємо уточнення
+  if (profile.orderLocked) {
+    await bot.sendMessage(chatId, "🕓 Ваше замовлення вже відправлено. Очікуйте відповіді менеджера 🙏");
     return;
   }
+
+  // ✏️ Якщо фото без підпису → приймаємо одне уточнення
+  if (!order.caption && text && text !== "🏠 Головне меню" && text !== "✅ Відправити замовлення менеджеру") {
+    order.caption = text;
+
+    await bot.sendMessage(
+      chatId,
+      `✅ Уточнення додано: "${text}"\n\nНатисніть "✅ Відправити замовлення менеджеру", щоб відправити.`,
+      {
+        reply_markup: {
+          keyboard: [
+            [{ text: "✅ Відправити замовлення менеджеру" }],
+            [{ text: "🏠 Головне меню" }]
+          ],
+          resize_keyboard: true
+        }
+      }
+    );
+    return;
+  }
+
+  // 🔄 Якщо користувач пише ще щось після уточнення — ігноруємо або обробляємо як звичайне повідомлення
+  await handleClientMessage(msg);
+  return;
 }
 
 // 🕒 Текстове замовлення — дозволяємо уточнення протягом 60 секунд
@@ -3801,4 +3830,5 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
