@@ -588,98 +588,7 @@ function isOrderClarification(text, chatId) {
 
   return hasKeyword || hasPhrase;
 }
-// ==================== УТОЧНЕННЯ ДО ФОТО-ЗАМОВЛЕННЯ ====================
-async function handlePhotoClarification(chatId, text, userName) {
-  try {
-    const profile = userProfiles[chatId];
-    if (!profile || !profile.pendingPhotoOrder) return;
 
-    // 📝 Додаємо уточнення в caption
-    const currentCaption = profile.pendingPhotoOrder.caption || '';
-    profile.pendingPhotoOrder.caption =
-      currentCaption + (currentCaption ? '\n' : '') + `➕ ${text}`;
-
-    // 🔄 Синхронізація з lastPhotoOrder
-    if (profile.lastPhotoOrder) {
-      profile.lastPhotoOrder.caption = profile.pendingPhotoOrder.caption;
-    }
-
-    // 📋 Зберігаємо уточнення
-    if (!profile.clarifications) profile.clarifications = [];
-    profile.clarifications.push(text);
-
-    // 🔔 Оновлюємо повідомлення менеджерів (якщо є)
-    for (const [managerId, notifications] of Object.entries(managerNotifications)) {
-      const notification = notifications[chatId];
-
-      if (notification && notification.messageId) {
-        try {
-          // Формуємо блок уточнень
-          let clarificationsBlock = "";
-          if (profile.clarifications?.length > 0) {
-            clarificationsBlock =
-              "\n\n➡️ Уточнення:\n" +
-              profile.clarifications.map((c, i) => `${i + 1}. ${c}`).join("\n");
-          }
-
-          if (notification.isPhoto) {
-            await bot.editMessageCaption(
-              `📷 Фото-замовлення від ${userName} (ID: ${chatId}):\n\n` +
-                `📝 Опис замовлення: ${profile.pendingPhotoOrder.caption}${clarificationsBlock}\n\n` +
-                `🔔 Клієнт додав нове уточнення!`,
-              {
-                chat_id: managerId,
-                message_id: notification.messageId,
-                reply_markup: {
-                  inline_keyboard: [
-                    [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
-                  ]
-                }
-              }
-            );
-          } else {
-            await bot.editMessageText(
-              `🆕 Фінальне замовлення від ${userName} (ID: ${chatId}):\n\n${profile.lastOrder}${clarificationsBlock}\n\n` +
-                `🔔 Клієнт додав нове уточнення!`,
-              {
-                chat_id: managerId,
-                message_id: notification.messageId,
-                reply_markup: {
-                  inline_keyboard: [
-                    [{ text: '💬 Почати чат з клієнтом', callback_data: `client_chat_${chatId}` }]
-                  ]
-                }
-              }
-            );
-          }
-
-          console.log(`✅ Оновлено повідомлення менеджера ${managerId} про замовлення від ${chatId}`);
-        } catch (editErr) {
-          console.error(`⚠️ Не вдалося оновити повідомлення для менеджера ${managerId}:`, editErr.message);
-        }
-      }
-    }
-
-    // ✅ Відповідь клієнту + показ кнопок
-    await bot.sendMessage(
-      chatId,
-      `✏️ Додано уточнення до замовлення: "${text}"\n\n💡 Менеджер побачить це уточнення коли прийме замовлення.`,
-      {
-        reply_markup: {
-          keyboard: [
-            [{ text: "✅ Відправити замовлення менеджеру" }],
-            [{ text: "🏠 Головне меню" }]
-          ],
-          resize_keyboard: true,
-          one_time_keyboard: false
-        }
-      }
-    );
-
-  } catch (err) {
-    console.error('⚠ handlePhotoClarification error:', err);
-  }
-}
 // ======= Активация благодарности =======
 function isThanksMessage(text) {
   if (!text) return false;
@@ -844,17 +753,32 @@ bot.on('message', async (msg) => {
     }
 
     // 🧩 Якщо менеджер ще не підключився
-    const lastOrderTime = userProfiles[chatId]?.lastOrderTime;
-    if (userProfiles[chatId]?.pendingPhotoOrder) {
-      if (text !== '✅ Відправити замовлення менеджеру' && text !== '🏠 Головне меню') {
-        await handlePhotoClarification(chatId, text, userName);
-        return;
-      }
-    } else if (lastOrderTime && Date.now() - lastOrderTime < 60 * 1000) {
-      await handleOrderClarification(chatId, text, userName);
-      return;
-    }
+const profile = userProfiles[chatId];
+const lastOrderTime = profile?.lastOrderTime;
 
+// 🚫 Якщо замовлення вже відправлено або чат завершено — не приймаємо уточнення
+if (!profile || profile.orderStatus === 'sent' || userStates[chatId]?.step === 'manager_chat_end') {
+  await handleClientMessage(msg);
+  return;
+}
+
+// 📷 Фото-замовлення — дозволяємо тільки одне уточнення
+if (profile?.pendingPhotoOrder) {
+  if (
+    text !== '✅ Відправити замовлення менеджеру' &&
+    text !== '🏠 Головне меню' &&
+    (!profile.clarifications || profile.clarifications.length === 0)
+  ) {
+    await handlePhotoClarification(chatId, text, userName);
+    return;
+  }
+}
+
+// 🕒 Текстове замовлення — дозволяємо уточнення протягом 60 секунд
+else if (lastOrderTime && Date.now() - lastOrderTime < 60 * 1000) {
+  await handleOrderClarification(chatId, text, userName);
+  return;
+}
     // 🧠 Усі інші повідомлення → AI / створення нового замовлення
     await handleClientMessage(msg);
 
@@ -1082,9 +1006,13 @@ async function handlePhotoMessage(msg) {
 
   setAutoFinalize(chatId, userName);
 }
-// ==================== ФіНАЛІЗАЦІЯ ====================
+// ==================== ФІНАЛІЗАЦІЯ ЗАМОВЛЕННЯ ====================
 async function finalizeAndSendOrder(chatId, userName) {
+
+  // 🚫 Блокуємо подальші уточнення
   const profile = userProfiles[chatId];
+  if (profile) profile.orderLocked = true;
+
   if (!profile || profile.orderStatus === 'sent') return;
 
   profile.orderStatus = 'sent';
@@ -1260,63 +1188,56 @@ async function handleDirectOrder(chatId, text, userName) {
 
 // ==================== ОБРОБКА УТОЧНЕНЬ ====================
 async function handleOrderClarification(chatId, text, userName) {
-  // 🚀 Якщо клієнт натиснув кнопку моментальної відправки
-  if (text === '✅ Відправити замовлення менеджеру') {
-    await finalizeAndSendOrder(chatId, userName);
-    return;
-  }
-
-  // 🚫 Ігноруємо кнопку повернення в меню
-  if (text === '🏠 Головне меню') {
-    return;
-  }
-
-  console.log(`✏️ Clarification detected from ${chatId}, text: ${text}`);
-
   const profile = userProfiles[chatId];
+
+  // 🚫 Якщо профіль не знайдено або замовлення вже відправлено
   if (!profile || profile.orderStatus === 'sent') {
     await handleGeneralMessage(chatId, text, userName);
     return;
   }
 
+  // 🏠 Повернення до меню
+  if (text === '🏠 Головне меню') return;
+
+  // ✅ Якщо клієнт натиснув кнопку відправки
+  if (text === '✅ Відправити замовлення менеджеру') {
+    await finalizeAndSendOrder(chatId, userName);
+    return;
+  }
+
+  // 🕒 Якщо час уточнень минув (більше 5 хв)
   if (Date.now() - profile.lastOrderTime > 5 * 60 * 1000) {
-    await bot.sendMessage(chatId, 
-      "⏰ Час для уточнень минув. Ваше попереднє замовлення вже відправлено менеджеру.\n\n" +
-      "Якщо хочете зробити нове замовлення, будь ласка, опишіть його повністю.",
+    await bot.sendMessage(
+      chatId,
+      "⏰ Час для уточнень минув. Ваше замовлення вже відправлено менеджеру.\n\n" +
+      "Щоб зробити нове замовлення — просто опишіть його заново 👇",
       mainMenu
     );
     return;
   }
 
-  if (!profile.clarifications) {
-    profile.clarifications = [];
+  // 🔥 Якщо менеджер ще не прийняв чат — дозволяємо тільки одне уточнення
+  if (profile.orderType === 'photo' && profile.clarifications?.length >= 1) {
+    await bot.sendMessage(
+      chatId,
+      "ℹ️ Ви вже додали уточнення. Тепер натисніть '✅ Відправити замовлення менеджеру' щоб завершити.",
+      orderCollectionMenu
+    );
+    return;
   }
 
-  // 🔥 Зберігаємо уточнення
+  // 🔹 Зберігаємо уточнення
+  if (!profile.clarifications) profile.clarifications = [];
   profile.clarifications.push(text);
-  profile.lastMessage = text;
-  profile.lastActivity = Date.now();
 
-  const totalClarifications = profile.clarifications.length;
+  console.log(`✏️ Clarification added from ${chatId}: ${text}`);
 
-  // Якщо фото-замовлення → інший текст
-  if (profile.orderType === 'photo') {
-    await bot.sendMessage(chatId,
-      `✅ Уточнення додано до фото-замовлення!\n\n` +
-      "🎯 Натисніть '✅ Відправити замовлення менеджеру' щоб відправити зараз\n" +
-      "📝 Або додайте ще деталі протягом 5 хвилин\n" +
-      `⏰ Замовлення автоматично відправиться через ${Math.ceil((5 * 60 * 1000 - (Date.now() - profile.lastOrderTime)) / 60000)} хв.`,
-      orderCollectionMenu
-    );
-  } else {
-    await bot.sendMessage(chatId,
-      `✅ Уточнення №${totalClarifications} додано до замовлення!\n\n` +
-      "🎯 Натисніть '✅ Відправити замовлення менеджеру' щоб відправити зараз\n" +
-      "📝 Або додайте ще деталі\n" +
-      `⏰ Замовлення автоматично відправиться через ${Math.ceil((5 * 60 * 1000 - (Date.now() - profile.lastOrderTime)) / 60000)} хв.`,
-      orderCollectionMenu
-    );
-  }
+  await bot.sendMessage(
+    chatId,
+    `✅ Уточнення додано!\n\n` +
+    "🎯 Натисніть '✅ Відправити замовлення менеджеру', щоб завершити.",
+    orderCollectionMenu
+  );
 }
 
 // ===================== CLIENT HANDLER =====================
@@ -2528,7 +2449,7 @@ async function forwardToClient(clientId, text) {
   }
 }
 
-// ==================== ОБНОВЛЕННАЯ ФУНКЦИЯ ЗАВЕРШЕНИЯ ЧАТА ====================
+// ==================== ОБНОВЛЕННАЯ ФУНКЦІЯ ЗАВЕРШЕННЯ ЧАТА ====================
 async function handleEndCommand(chatId) {
   if (userStates[chatId]?.step === 'manager_chat') {
     const managerId = userStates[chatId].managerId;
@@ -2536,6 +2457,17 @@ async function handleEndCommand(chatId) {
     // 🔥 Сразу очищаем состояния
     delete activeManagerChats[managerId];
     delete userStates[chatId];
+
+    // 🧹 Очищаем профиль клиента
+    if (userProfiles[chatId]) {
+      delete userProfiles[chatId].pendingPhotoOrder;
+      delete userProfiles[chatId].lastPhotoOrder;
+      delete userProfiles[chatId].lastOrder;
+      delete userProfiles[chatId].orderStatus;
+      delete userProfiles[chatId].orderType;
+      delete userProfiles[chatId].orderLocked; // 🧹 Разблокируем уточнения
+      userProfiles[chatId].clarifications = [];
+    }
 
     // Удаляем кнопку у менеджера
     await removeManagerNotificationButton(managerId, chatId);
@@ -2559,13 +2491,15 @@ async function handleEndCommand(chatId) {
     await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
   }
 }
+
 // ==================== СПРОЩЕНА ФУНКЦІЯ (БЕЗ ВИДАЛЕННЯ КНОПОК) ====================
 async function removeManagerNotificationButton(managerId, clientId) {
   // Просто логируем, нічого не змінюємо
   console.log(`ℹ️ Пропущено видалення кнопки для менеджера ${managerId}, клієнт ${clientId}`);
   return;
 }
-// ==================== ОБНОВЛЕННАЯ ФУНКЦИЯ ЗАВЕРШЕНИЯ ЧАТА МЕНЕДЖЕРОМ ====================
+
+// ==================== ОБНОВЛЕНА ФУНКЦІЯ ЗАВЕРШЕННЯ ЧАТА МЕНЕДЖЕРОМ ====================
 async function endManagerChat(managerId) {
   const clientId = activeManagerChats[managerId];
 
@@ -2575,6 +2509,11 @@ async function endManagerChat(managerId) {
     // Очищаємо стани
     delete activeManagerChats[managerId];
     delete userStates[clientId];
+
+    // 🧹 Скидаємо блокування уточнень
+    if (userProfiles[clientId]) {
+      delete userProfiles[clientId].orderLocked; // 🧹 Сбрасываем блокировку заказов
+    }
 
     // Уведомляємо клієнта
     try {
@@ -3862,3 +3801,4 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
