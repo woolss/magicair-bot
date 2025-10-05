@@ -866,10 +866,27 @@ if (text === "✅ Відправити замовлення менеджеру")
 }
 
 // 🕒 Текстове замовлення — дозволяємо уточнення протягом 60 секунд
-else if (lastOrderTime && Date.now() - lastOrderTime < 60 * 1000) {
-  await handleOrderClarification(chatId, text, userName);
+// Перевіряємо: 1) чи є профіль, 2) чи є orderType, 3) чи не минуло 60 секунд
+else if (profile?.orderType === 'text' && lastOrderTime && Date.now() - lastOrderTime < 60 * 1000) {
+  // 🟢 ЛОГИКА УТОЧНЕННЯ ТЕКСТОВОГО ЗАМОВЛЕННЯ (ПЕРЕЗАПИС)
+  
+  // 1. Обновляем текст заказа, перезаписывая предыдущий
+  profile.lastOrder = text;
+  
+  // 2. Сбрасываем таймер авто-отправки (продлеваем на 5 минут)
+  setAutoFinalize(chatId, userName); 
+  
+  // 3. Уведомляем клиента
+  await bot.sendMessage(chatId, 
+    `✅ Ваш попередній текст замовлення оновлено.\n\n` +
+    `📝 Новий текст: "${text}"\n` + 
+    `⏰ Замовлення буде відправлено автоматично, або натисніть "✅ Відправити замовлення менеджеру".`,
+    orderCollectionMenu
+  );
+  
   return;
 }
+    
     // 🧠 Усі інші повідомлення → AI / створення нового замовлення
     await handleClientMessage(msg);
 
@@ -1277,98 +1294,70 @@ async function handleDirectOrder(chatId, text, userName) {
   setAutoFinalize(chatId, userName);
 }
 
-// ==================== ОБРОБКА УТОЧНЕНЬ ====================
-async function handleOrderClarification(chatId, text, userName) {
-  const profile = userProfiles[chatId];
-
-  // 🚫 Якщо профіль не знайдено або замовлення вже відправлено
-  if (!profile || profile.orderStatus === 'sent') {
-    await handleGeneralMessage(chatId, text, userName);
-    return;
-  }
-
-  // 🏠 Повернення до меню
-  if (text === '🏠 Головне меню') return;
-
-  // ✅ Якщо клієнт натиснув кнопку відправки
-  if (text === '✅ Відправити замовлення менеджеру') {
-    await finalizeAndSendOrder(chatId, userName);
-    return;
-  }
-
-  // 🕒 Якщо час уточнень минув (більше 5 хв)
-  if (Date.now() - profile.lastOrderTime > 5 * 60 * 1000) {
-    await bot.sendMessage(
-      chatId,
-      "⏰ Час для уточнень минув. Ваше замовлення вже відправлено менеджеру.\n\n" +
-      "Щоб зробити нове замовлення — просто опишіть його заново 👇",
-      mainMenu
-    );
-    return;
-  }
-
-  // 🔥 Якщо менеджер ще не прийняв чат — дозволяємо тільки одне уточнення
-  if (profile.orderType === 'photo' && profile.clarifications?.length >= 1) {
-    await bot.sendMessage(
-      chatId,
-      "ℹ️ Ви вже додали уточнення. Тепер натисніть '✅ Відправити замовлення менеджеру' щоб завершити.",
-      orderCollectionMenu
-    );
-    return;
-  }
-
-  // 🔹 Зберігаємо уточнення
-  if (!profile.clarifications) profile.clarifications = [];
-  profile.clarifications.push(text);
-
-  console.log(`✏️ Clarification added from ${chatId}: ${text}`);
-
-  await bot.sendMessage(
-    chatId,
-    `✅ Уточнення додано!\n\n` +
-    "🎯 Натисніть '✅ Відправити замовлення менеджеру', щоб завершити.",
-    orderCollectionMenu
-  );
-}
-
 // ===================== CLIENT HANDLER =====================
 async function handleClientMessage(msg) {
-  const chatId = msg.chat.id;
-  const text = msg.text || '';
-  const userName = msg.from.first_name || 'Клієнт';
+  const chatId = msg.chat.id;
+  const text = msg.text || '';
+  const userName = msg.from.first_name || 'Клієнт';
 
-  if (userProfiles[chatId]) userProfiles[chatId].lastActivity = Date.now();
+  if (userProfiles[chatId]) userProfiles[chatId].lastActivity = Date.now();
 
-  if (userStates[chatId]?.step === 'manager_chat') {
-    if (text === '🏠 Головне меню') {
-      await handleEndCommand(chatId);
-      return;
-    }
-    await forwardToManager(chatId, text, userName);
-    return;
-  }
+  if (userStates[chatId]?.step === 'manager_chat') {
+    if (text === '🏠 Головне меню') {
+      await handleEndCommand(chatId);
+      return;
+    }
+    await forwardToManager(chatId, text, userName);
+    return;
+  }
 
-  if (isThanksMessage(text)) {
-    await bot.sendMessage(chatId, "💜 Дякуємо і вам! Радий був допомогти 🎈");
-    return;
-  }
+  if (isThanksMessage(text)) {
+    await bot.sendMessage(chatId, "💜 Дякуємо і вам! Радий був допомогти 🎈");
+    return;
+  }
 
-  const isDirectOrder = isOrderMessage(text);
-  const isOrderClarif = isOrderClarification(text, chatId);
+  const isDirectOrder = isOrderMessage(text);
+  // const isOrderClarif = isOrderClarification(text, chatId); // ✅ Убрали, так как эта логика больше не нужна
 
-  if (!userProfiles[chatId]) {
-    userProfiles[chatId] = { 
-      chatId, 
-      created: Date.now(), 
-      notifications: true, 
-      holidayNotifications: [],
-      clarifications: [] 
-    };
-  }
-
-  if (isDirectOrder) return await handleDirectOrder(chatId, text, userName);
-  if (isOrderClarif) return await handleOrderClarification(chatId, text, userName);
-
+  if (!userProfiles[chatId]) {
+    userProfiles[chatId] = { 
+      chatId, 
+      created: Date.now(), 
+      notifications: true, 
+      holidayNotifications: [],
+      // clarifications: [] // ✅ Убрали, так как массив уточнений больше не используется
+    };
+  }
+  
+  // 🔥 ЛОГІКА: Створення нового текстового замовлення
+  if (isDirectOrder) {
+    const profile = userProfiles[chatId] || (userProfiles[chatId] = { chatId, created: Date.now() });
+    
+    // ✅ Ініціалізація нового текстового замовлення
+    profile.lastOrder = text;
+    profile.orderType = 'text'; // ⬅️ Ключевой флаг для логики уточнений
+    profile.orderStatus = 'collecting';
+    profile.lastOrderTime = Date.now();
+    
+    // Отправка меню с просьбой уточнить
+    await bot.sendMessage(chatId, 
+      "📝 Я зафіксував ваше замовлення. Уточніть, будь ласка, деталі:\n\n" +
+      "📅 На коли потрібна доставка?\n" +
+      "📍 Доставка чи самовивіз?\n\n" +
+      "💡 Ви можете додати деталі зараз або натиснути кнопку відправки.\n" +
+      "⏰ У вас є 5 хвилин для уточнень.",
+      orderCollectionMenu
+    );
+    
+    setAutoFinalize(chatId, userName); // Встановлюємо таймер авто-відправки
+    return;
+  }
+  
+  // ❌ Предыдущие вызовы handleDirectOrder и handleOrderClarification удалены.
+  
+  // Если это не прямой заказ, управление возвращается в bot.on('message') для обработки AI.
+  return; 
+}
   // ========= SWITCH ПО КНОПКАМ =========
   switch (text) {
   case '🏠 Головне меню':
@@ -3892,6 +3881,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
