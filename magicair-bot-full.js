@@ -928,91 +928,92 @@ async function finalizeAndSendOrder(chatId, userName) {
   const freeManagers = MANAGERS.filter((id) => !activeManagerChats[id]);
   const notifyList = freeManagers.length ? freeManagers : MANAGERS;
 
-  // ======= Відправка замовлення менеджеру =======
-  if (profile.orderType === "photo" && profile.lastPhotoOrder) {
-    for (const managerId of notifyList) {
-      try {
-        const actualCaption =
-          profile.pendingPhotoOrder?.caption ||
-          profile.lastPhotoOrder.caption ||
-          "(без коментаря)";
+ // ======= Відправка замовлення менеджеру =======
+if (profile.orderType === "photo" && profile.lastPhotoOrder) {
+  for (const managerId of notifyList) {
+    try {
+      // 🧩 Беремо найактуальніший опис замовлення (враховує уточнення)
+      const actualCaption =
+        profile.lastOrder?.trim() ||
+        profile.pendingPhotoOrder?.caption ||
+        profile.lastPhotoOrder.caption ||
+        "(без коментаря)";
 
-        const sentMsg = await bot.sendPhoto(
-          managerId,
-          profile.lastPhotoOrder.fileId,
-          {
-            caption:
-              `📷 Фото-замовлення від ${userName} (ID: ${chatId}):\n\n` +
-              `📝 Опис замовлення: ${actualCaption}${clarificationsBlock || ""}`,
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: "💬 Почати чат з клієнтом",
-                    callback_data: `client_chat_${chatId}`,
-                  },
-                ],
+      const sentMsg = await bot.sendPhoto(
+        managerId,
+        profile.lastPhotoOrder.fileId,
+        {
+          caption:
+            `📷 Фото-замовлення від ${userName} (ID: ${chatId}):\n\n` +
+            `📝 Опис замовлення: ${actualCaption}${clarificationsBlock || ""}`,
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "💬 Почати чат з клієнтом",
+                  callback_data: `client_chat_${chatId}`,
+                },
               ],
-            },
-          }
-        );
+            ],
+          },
+        }
+      );
 
-        // ✅ Зберігаємо ID повідомлення для подальшого оновлення
-        if (!managerNotifications[managerId])
-          managerNotifications[managerId] = {};
-        managerNotifications[managerId][chatId] = {
-          messageId: sentMsg.message_id,
-          isPhoto: true,
-          fileId: profile.lastPhotoOrder.fileId,
-        };
-      } catch (err) {
-        console.error(
-          "❌ Failed to notify manager with photo order:",
-          err.message
-        );
-      }
-    }
-  } else {
-    for (const managerId of notifyList) {
-      try {
-        const sentMsg = await bot.sendMessage(
-          managerId,
-          `🆕 Фінальне замовлення від ${userName} (ID: ${chatId}):\n\n${profile.lastOrder}${clarificationsBlock || ""}`,
-          {
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: "💬 Почати чат з клієнтом",
-                    callback_data: `client_chat_${chatId}`,
-                  },
-                ],
-              ],
-            },
-          }
-        );
-
-        // ✅ Зберігаємо ID повідомлення
-        if (!managerNotifications[managerId])
-          managerNotifications[managerId] = {};
-        managerNotifications[managerId][chatId] = {
-          messageId: sentMsg.message_id,
-          isPhoto: false,
-        };
-      } catch (err) {
-        console.error(
-          "❌ Failed to notify manager with text order:",
-          err.message
-        );
-      }
+      // ✅ Зберігаємо ID повідомлення для подальшого оновлення
+      if (!managerNotifications[managerId])
+        managerNotifications[managerId] = {};
+      managerNotifications[managerId][chatId] = {
+        messageId: sentMsg.message_id,
+        isPhoto: true,
+        fileId: profile.lastPhotoOrder.fileId,
+      };
+    } catch (err) {
+      console.error(
+        "❌ Failed to notify manager with photo order:",
+        err.message
+      );
     }
   }
+} else {
+  for (const managerId of notifyList) {
+    try {
+      const sentMsg = await bot.sendMessage(
+        managerId,
+        `🆕 Фінальне замовлення від ${userName} (ID: ${chatId}):\n\n${profile.lastOrder}${clarificationsBlock || ""}`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "💬 Почати чат з клієнтом",
+                  callback_data: `client_chat_${chatId}`,
+                },
+              ],
+            ],
+          },
+        }
+      );
 
-  // очищуємо тимчасові дані
-  profile.clarifications = [];
-  delete profile.orderStatus;
-  delete profile.orderType;
+      // ✅ Зберігаємо ID повідомлення
+      if (!managerNotifications[managerId])
+        managerNotifications[managerId] = {};
+      managerNotifications[managerId][chatId] = {
+        messageId: sentMsg.message_id,
+        isPhoto: false,
+      };
+    } catch (err) {
+      console.error(
+        "❌ Failed to notify manager with text order:",
+        err.message
+      );
+    }
+  }
 }
+
+// очищуємо тимчасові дані
+profile.clarifications = [];
+delete profile.orderStatus;
+delete profile.orderType;
 
 // ===================== ОБРОБКА ПРЯМОГО ЗАМОВЛЕННЯ (ОНОВЛЕНО) =====================
 async function handleDirectOrder(chatId, text, userName) {
@@ -3724,6 +3725,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
