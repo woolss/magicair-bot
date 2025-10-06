@@ -1014,7 +1014,7 @@ if (profile.orderType === "photo" && profile.lastPhotoOrder) {
 profile.clarifications = [];
 delete profile.orderStatus;
 delete profile.orderType;
-
+}
 // ===================== ОБРОБКА ПРЯМОГО ЗАМОВЛЕННЯ (ОНОВЛЕНО) =====================
 async function handleDirectOrder(chatId, text, userName) {
   console.log(`📦 Direct order detected from ${chatId}, text: ${text}`);
@@ -3725,6 +3725,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
