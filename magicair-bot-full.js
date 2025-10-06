@@ -834,87 +834,71 @@ async function handlePhotoMessage(msg) {
   const caption = msg.caption || '';
   const fileId = msg.photo[msg.photo.length - 1].file_id;
 
-  console.log(`📷 Фото отримано від ${chatId} (${userName}): ${caption}`);
+  const profile = userProfiles[chatId] || (userProfiles[chatId] = { chatId, created: Date.now() });
 
-  // 🟢 Якщо клієнт зараз у чаті з менеджером — просто пересилаємо фото
-  const managerId = Object.keys(activeManagerChats).find(
-    mId => activeManagerChats[mId] == chatId
-  );
-
-  if (managerId) {
-    try {
-      await bot.sendPhoto(managerId, fileId, {
-        caption: `📷 ${userName} (${chatId}):\n${caption || '(без коментаря)'}`
-      });
-      await logMessage(chatId, managerId, `[ФОТО] ${caption}`, 'client');
-      console.log(`📷 Фото від ${chatId} переслано менеджеру ${managerId}`);
-      return; // ⚠️ Не створюємо нове замовлення
-    } catch (err) {
-      console.error(`❌ Не вдалося переслати фото менеджеру ${managerId}:`, err.message);
+  // Якщо фото під час активного замовлення
+  if (profile.orderStatus === 'collecting') {
+    if (profile.lastClarified) {
+      await bot.sendMessage(chatId, "🕓 Ви вже додали уточнення. Натисніть '✅ Відправити замовлення менеджеру'.");
       return;
     }
+    profile.lastClarified = true;
+    profile.lastOrder += `\n[Фото уточнення] ${caption || "(без коментаря)"}`;
+    await bot.sendMessage(chatId, "📸 Додано фото-уточнення до замовлення.", orderCollectionMenu);
+    return;
   }
 
-  // 🔥 Якщо менеджер ще не підключився — стандартна логіка замовлення
-  if (!userProfiles[chatId]) {
-    userProfiles[chatId] = { chatId, created: Date.now(), clarifications: [] };
-  }
-
-  initOrderTracking(chatId);
-
-  // 🔥 Фіксуємо, що це фото-замовлення
-  userProfiles[chatId].orderType = 'photo';
-  userProfiles[chatId].pendingPhotoOrder = { fileId, caption };
-  userProfiles[chatId].lastPhotoOrder = { fileId, caption };
-  userProfiles[chatId].lastOrder = caption || "(фото без коментаря)";
-  userProfiles[chatId].orderStatus = caption ? 'ready' : 'collecting';
+  // --- НОВЕ фото-замовлення ---
+  profile.orderType = 'photo';
+  profile.orderStatus = 'collecting';
+  profile.lastClarified = false;
+  profile.lastPhotoOrder = { fileId, caption };
+  profile.lastOrder = caption || "(фото без коментаря)";
+  profile.lastOrderTime = Date.now();
 
   if (!caption) {
     await bot.sendMessage(chatId,
-      "📷 Ви надіслали фото кульок. Щоб оформити замовлення, уточніть, будь ласка:\n\n" +
-      "📅 На коли потрібна доставка?\n" +
-      "📍 Доставка чи самовивіз?\n\n" +
-      "💡 Ви можете додати деталі зараз або натиснути кнопку відправки.\n" +
-      "⏰ У вас є 5 хвилин для уточнень.",
+      "📷 Ви надіслали фото кульок. Уточніть, будь ласка:\n📅 На коли потрібна доставка?\n📍 Доставка чи самовивіз?",
       orderCollectionMenu
     );
   } else {
     await bot.sendMessage(chatId,
-      "✅ Ваше фото-замовлення готове до відправки!\n\n" +
-      "🎯 Натисніть '✅ Відправити замовлення менеджеру' щоб відправити зараз\n" +
-      "📝 Або додайте ще деталі протягом 5 хвилин\n" +
-      "⏰ Замовлення автоматично відправиться менеджеру через 5 хвилин",
+      "✅ Ваше фото-замовлення готове до відправки!\n🎯 Натисніть '✅ Відправити замовлення менеджеру'.",
       orderCollectionMenu
     );
   }
-
+  
+  // 🕓 Автоматична фіналізація, якщо користувач не натисне кнопку
   setAutoFinalize(chatId, userName);
 }
 // ==================== ФІНАЛІЗАЦІЯ ЗАМОВЛЕННЯ ====================
 async function finalizeAndSendOrder(chatId, userName) {
 
-  // 🚫 Блокуємо подальші уточнення
   const profile = userProfiles[chatId];
-  if (profile) profile.orderLocked = true;
+  if (!profile) return;
 
-  if (!profile || profile.orderStatus === 'sent') return;
+  // 🚫 Якщо вже відправлено — нічого не робимо
+  if (profile.orderStatus === 'sent') return;
 
-  profile.orderStatus = 'sent';
+  // 🚫 Блокуємо подальші уточнення
+  profile.orderLocked = true;
 
-  // очищаем таймер автопідтвердження
+  // 🧹 Очищаємо таймер автопідтвердження (якщо був)
   if (profile.autoSendTimer) {
     clearTimeout(profile.autoSendTimer);
     delete profile.autoSendTimer;
   }
 
-  // блок уточнень
+  // 🟢 Позначаємо замовлення як відправлене
+  profile.orderStatus = 'sent';
+
+  // 🧩 Формуємо блок уточнень
   let clarificationsBlock = "";
   if (profile.clarifications?.length > 0) {
-    clarificationsBlock =
-      "\n\n➡️ Уточнення:\n" + profile.clarifications.join("\n");
+    clarificationsBlock = "\n\n➡️ Уточнення:\n" + profile.clarifications.join("\n");
   }
 
-  // підтвердження клієнту
+  // ✅ Повідомлення клієнту
   await bot.sendMessage(
     chatId,
     "✅ Ваше замовлення відправлено менеджеру для підтвердження. Незабаром з вами зв'яжуться.\n\n" +
@@ -924,97 +908,92 @@ async function finalizeAndSendOrder(chatId, userName) {
 
   waitingClients.add(chatId);
 
-  // знаходимо вільних менеджерів
-  const freeManagers = MANAGERS.filter((id) => !activeManagerChats[id]);
+  // 🧭 Знаходимо вільних менеджерів
+  const freeManagers = MANAGERS.filter(id => !activeManagerChats[id]);
   const notifyList = freeManagers.length ? freeManagers : MANAGERS;
 
- // ======= Відправка замовлення менеджеру =======
-if (profile.orderType === "photo" && profile.lastPhotoOrder) {
-  for (const managerId of notifyList) {
-    try {
-      // 🧩 Беремо найактуальніший опис замовлення (враховує уточнення)
-      const actualCaption =
-        profile.lastOrder?.trim() ||
-        profile.pendingPhotoOrder?.caption ||
-        profile.lastPhotoOrder.caption ||
-        "(без коментаря)";
+  // ======= Відправка замовлення менеджеру =======
+  if (profile.orderType === "photo" && profile.lastPhotoOrder) {
+    for (const managerId of notifyList) {
+      try {
+        const actualCaption =
+          profile.lastOrder?.trim() ||
+          profile.pendingPhotoOrder?.caption ||
+          profile.lastPhotoOrder.caption ||
+          "(без коментаря)";
 
-      const sentMsg = await bot.sendPhoto(
-        managerId,
-        profile.lastPhotoOrder.fileId,
-        {
-          caption:
-            `📷 Фото-замовлення від ${userName} (ID: ${chatId}):\n\n` +
-            `📝 Опис замовлення: ${actualCaption}${clarificationsBlock || ""}`,
-          reply_markup: {
-            inline_keyboard: [
-              [
-                {
-                  text: "💬 Почати чат з клієнтом",
-                  callback_data: `client_chat_${chatId}`,
-                },
+        const sentMsg = await bot.sendPhoto(
+          managerId,
+          profile.lastPhotoOrder.fileId,
+          {
+            caption:
+              `📷 Фото-замовлення від ${userName} (ID: ${chatId}):\n\n` +
+              `📝 Опис замовлення: ${actualCaption}${clarificationsBlock || ""}`,
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text: "💬 Почати чат з клієнтом",
+                    callback_data: `client_chat_${chatId}`,
+                  },
+                ],
               ],
-            ],
-          },
-        }
-      );
+            },
+          }
+        );
 
-      // ✅ Зберігаємо ID повідомлення для подальшого оновлення
-      if (!managerNotifications[managerId])
-        managerNotifications[managerId] = {};
-      managerNotifications[managerId][chatId] = {
-        messageId: sentMsg.message_id,
-        isPhoto: true,
-        fileId: profile.lastPhotoOrder.fileId,
-      };
-    } catch (err) {
-      console.error(
-        "❌ Failed to notify manager with photo order:",
-        err.message
-      );
+        if (!managerNotifications[managerId])
+          managerNotifications[managerId] = {};
+        managerNotifications[managerId][chatId] = {
+          messageId: sentMsg.message_id,
+          isPhoto: true,
+          fileId: profile.lastPhotoOrder.fileId,
+        };
+      } catch (err) {
+        console.error("❌ Failed to notify manager with photo order:", err.message);
+      }
+    }
+  } else {
+    for (const managerId of notifyList) {
+      try {
+        const sentMsg = await bot.sendMessage(
+          managerId,
+          `🆕 Фінальне замовлення від ${userName} (ID: ${chatId}):\n\n${profile.lastOrder}${clarificationsBlock || ""}`,
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text: "💬 Почати чат з клієнтом",
+                    callback_data: `client_chat_${chatId}`,
+                  },
+                ],
+              ],
+            },
+          }
+        );
+
+        if (!managerNotifications[managerId])
+          managerNotifications[managerId] = {};
+        managerNotifications[managerId][chatId] = {
+          messageId: sentMsg.message_id,
+          isPhoto: false,
+        };
+      } catch (err) {
+        console.error("❌ Failed to notify manager with text order:", err.message);
+      }
     }
   }
-} else {
-  for (const managerId of notifyList) {
-    try {
-      const sentMsg = await bot.sendMessage(
-        managerId,
-        `🆕 Фінальне замовлення від ${userName} (ID: ${chatId}):\n\n${profile.lastOrder}${clarificationsBlock || ""}`,
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [
-                {
-                  text: "💬 Почати чат з клієнтом",
-                  callback_data: `client_chat_${chatId}`,
-                },
-              ],
-            ],
-          },
-        }
-      );
 
-      // ✅ Зберігаємо ID повідомлення
-      if (!managerNotifications[managerId])
-        managerNotifications[managerId] = {};
-      managerNotifications[managerId][chatId] = {
-        messageId: sentMsg.message_id,
-        isPhoto: false,
-      };
-    } catch (err) {
-      console.error(
-        "❌ Failed to notify manager with text order:",
-        err.message
-      );
-    }
-  }
+  // 🧹 Очищення тимчасових даних після відправки
+  profile.clarifications = [];
+  delete profile.orderStatus;
+  delete profile.orderType;
+  delete profile.pendingPhotoOrder;
+  delete profile.lastClarified; // 🔹 важливо для обмеження уточнень
+  delete profile.orderLocked;
 }
 
-// очищуємо тимчасові дані
-profile.clarifications = [];
-delete profile.orderStatus;
-delete profile.orderType;
-}
 // ===================== ОБРОБКА ПРЯМОГО ЗАМОВЛЕННЯ (ОНОВЛЕНО) =====================
 async function handleDirectOrder(chatId, text, userName) {
   console.log(`📦 Direct order detected from ${chatId}, text: ${text}`);
@@ -1074,14 +1053,13 @@ async function handleDirectOrder(chatId, text, userName) {
 // ===================== CLIENT HANDLER =====================
 async function handleClientMessage(msg) {
   const chatId = msg.chat.id;
-  const text = msg.text || msg.caption || ''; // 🔹 підтримка підписів до фото
+  const text = msg.text || msg.caption || '';
   const userName = msg.from.first_name || 'Клієнт';
 
-  // 🖼 Якщо повідомлення містить фото — не обробляємо тут
-  // (щоб уникнути дублювання з handlePhotoMessage)
+  // 🖼 Якщо це фото — не обробляємо тут
   if (msg.photo) return;
 
-  // 🧩 Захист від порожніх повідомлень (коли немає тексту й немає фото)
+  // 🧩 Захист від порожніх повідомлень
   if (!text.trim()) {
     await bot.sendMessage(chatId, "Повідомлення не може бути пустим.");
     return;
@@ -1090,7 +1068,7 @@ async function handleClientMessage(msg) {
   // 🕓 Оновлюємо активність користувача
   if (userProfiles[chatId]) userProfiles[chatId].lastActivity = Date.now();
 
-  // 1. Чат з менеджером
+  // 1️⃣ Чат з менеджером
   if (userStates[chatId]?.step === 'manager_chat') {
     if (text === '🏠 Головне меню') {
       await handleEndCommand(chatId);
@@ -1100,104 +1078,91 @@ async function handleClientMessage(msg) {
     return;
   }
 
-  // 2. Подяка
+  // 2️⃣ Подяка
   if (isThanksMessage(text)) {
     await bot.sendMessage(chatId, "💜 Дякуємо і вам! Радий був допомогти 🎈");
     return;
   }
-  
-  // 3. ОБРОБКА КНОПОК МЕНЮ (НОВИЙ КРОК)
-  const menuHandled = await handleMenuActions(chatId, text, userName);
-  if (menuHandled) {
-      return;
-  }
 
-  // Ініціалізація профілю (якщо він не існував)
+  // 3️⃣ Обробка кнопок меню
+  const menuHandled = await handleMenuActions(chatId, text, userName);
+  if (menuHandled) return;
+
+  // 4️⃣ Ініціалізація профілю
   if (!userProfiles[chatId]) {
     userProfiles[chatId] = { 
       chatId, 
       created: Date.now(), 
       notifications: true, 
-      holidayNotifications: [],
-      // Тут, можливо, був clarification, але опустимо його, якщо він не використовується в логіці
+      holidayNotifications: []
     };
   }
-  
-  const isDirectOrder = isOrderMessage(text);
 
-  // 4. Створення або доповнення текстового замовлення
-if (isDirectOrder || isOrderClarification(text, chatId)) {
   const profile = userProfiles[chatId];
+  const isDirectOrder = isOrderMessage(text);
+  const isClarification = isOrderClarification(text, chatId);
 
-  // Ініціалізація профілю, якщо нема
-  if (!profile) {
-    userProfiles[chatId] = { 
-      chatId, 
-      created: Date.now(), 
-      notifications: true, 
-      holidayNotifications: [] 
-    };
-  }
+  // 5️⃣ Створення або уточнення текстового замовлення
+  if (isDirectOrder || isClarification) {
+    // 🔒 Перевірка — якщо замовлення вже фіналізоване
+    if (profile.orderLocked) {
+      await bot.sendMessage(chatId, "🔒 Це замовлення вже готове. Натисніть '✅ Відправити замовлення менеджеру'.");
+      return;
+    }
 
-  // Якщо замовлення вже створене і триває — додаємо уточнення
-  if (profile.orderStatus === 'collecting' && isOrderClarification(text, chatId)) {
-    profile.lastOrder += `\n${text}`;
+    // 🟣 Якщо вже є активне замовлення в процесі
+    if (profile.orderStatus === 'collecting') {
+      if (isClarification) {
+        if (profile.lastClarified) {
+          await bot.sendMessage(chatId, "🕓 Ви вже додали уточнення. Натисніть '✅ Відправити замовлення менеджеру' для відправки.");
+          return;
+        }
+        profile.lastOrder += `\n${text}`;
+        profile.lastClarified = true;
+
+        await bot.sendMessage(chatId,
+          `➕ Додано уточнення до вашого замовлення.\n\n📝 Поточний текст замовлення:\n${profile.lastOrder}`,
+          orderCollectionMenu
+        );
+        return;
+      }
+    }
+
+    // 🆕 --- НОВЕ замовлення ---
+    profile.lastOrder = text;
+    profile.orderType = 'text';
+    profile.orderStatus = 'collecting';
     profile.lastOrderTime = Date.now();
+    profile.lastClarified = false;
 
-    console.log(`📦 [order update] ${userName} → уточнення додано до активного замовлення`);
-    
-    await bot.sendMessage(chatId, 
-      `➕ Додано уточнення до вашого замовлення.\n\n` +
-      `📝 Поточний текст замовлення:\n${profile.lastOrder}`,
-      orderCollectionMenu
-    );
+    console.log(`🆕 [new order] ${userName} → створено нове замовлення`);
+
+    // 🔍 Перевірка повноти
+    const hasQuantity = /\d+/.test(text) || /штук|шт\b/i.test(text);
+    const hasType = /(латексні|фольговані|цифри|фігури|ходячі|серця|зірки|однотонні|з малюнком|з конфеті|агат|браш|з бантиками)/i.test(text);
+    const hasDate = /(сьогодні|завтра|післязавтра|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})/i.test(text);
+    const hasStore = /(оболонь|теремки|самовивіз)/i.test(text);
+    const detailsCount = [hasQuantity, hasType, hasDate, hasStore].filter(Boolean).length;
+
+    if (detailsCount < 2) {
+      let clarificationMessage = "📝 Я зафіксував ваше замовлення. Для оформлення, будь ласка, уточніть:\n\n";
+      if (!hasQuantity) clarificationMessage += "📦 Скільки кульок потрібно?\n";
+      if (!hasType) clarificationMessage += "🎈 Які саме кульки: латексні, фольговані, цифри?\n";
+      if (!hasDate) clarificationMessage += "📅 На коли потрібна доставка?\n";
+      if (!hasStore) clarificationMessage += "📍 Доставка чи самовивіз (з якого магазину)?\n";
+
+      clarificationMessage += "\n💡 Ви можете додати деталі зараз або натиснути кнопку '✅ Відправити замовлення менеджеру'.";
+
+      await bot.sendMessage(chatId, clarificationMessage, orderCollectionMenu);
+      return;
+    }
+
+    profile.orderStatus = 'ready';
+    await bot.sendMessage(chatId, "✅ Ваше замовлення готове до відправки!\n\n🎯 Натисніть '✅ Відправити замовлення менеджеру'.", orderCollectionMenu);
     return;
   }
 
-  // --- НОВЕ замовлення ---
-  profile.lastOrder = text;
-  profile.orderType = 'text';
-  profile.orderStatus = 'collecting';
-  profile.lastOrderTime = Date.now();
-
-  console.log(`🆕 [new order] ${userName} → створено нове замовлення`);
-
-  // Перевірка повноти
-  const hasQuantity = /\d+/.test(text) || /штук|шт\b/i.test(text);
-  const hasSpecificType = /(латексні|фольговані|цифри|фігури|ходячі|серця|зірки|однотонні|з малюнком|з конфеті|агат|браш|з бантиками)/i.test(text);
-  const hasDate = /(сьогодні|завтра|післязавтра|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})/i.test(text);
-  const hasStore = /(оболонь|теремки|самовивіз)/i.test(text);
-
-  const detailsCount = [hasQuantity, hasSpecificType, hasDate, hasStore].filter(Boolean).length;
-  const hasEnoughDetails = detailsCount >= 2;
-
-  if (!hasEnoughDetails) {
-    console.log(`🟡 [order incomplete] ${userName} → бот запросив уточнення`);
-
-    let clarificationMessage = "📝 Я зафіксував ваше замовлення. Для оформлення, будь ласка, уточніть:\n\n";
-    if (!hasQuantity) clarificationMessage += "📦 Скільки кульок потрібно?\n";
-    if (!hasSpecificType) clarificationMessage += "🎈 Які саме кульки: латексні, фольговані, цифри?\n";
-    if (!hasDate) clarificationMessage += "📅 На коли потрібна доставка?\n";
-    if (!hasStore) clarificationMessage += "📍 Доставка чи самовивіз (з якого магазину)?\n";
-
-    clarificationMessage += "\n💡 Ви можете додати деталі зараз або натиснути кнопку '✅ Відправити замовлення менеджеру' щоб відправити те що є.\n";
-    await bot.sendMessage(chatId, clarificationMessage, orderCollectionMenu);
-    return;
-  }
-
-  // Якщо замовлення повне — готове до відправки
-  profile.orderStatus = 'ready';
-  console.log(`✅ [order ready] ${userName} → замовлення готове до відправки`);
-
-  await bot.sendMessage(chatId,
-    "✅ Ваше замовлення готове до відправки!\n\n" +
-    "🎯 Натисніть '✅ Відправити замовлення менеджеру' щоб відправити зараз.",
-    orderCollectionMenu
-  );
-  return;
-}
-
-  // 5. Обробка профілю / пошуку
+  // 6️⃣ Обробка профілю / пошуку
   if (userStates[chatId]?.step?.startsWith('profile_')) {
     await handleProfileInput(chatId, text, userStates[chatId].step);
     return;
@@ -1207,8 +1172,8 @@ if (isDirectOrder || isOrderClarification(text, chatId)) {
     delete userStates[chatId];
     return;
   }
-  
-  // 6. Обробка решти повідомлень (AI)
+
+  // 7️⃣ Інше → AI
   await handleGeneralMessage(chatId, text, userName);
 }
 // ===================== ОБРОБНИК МЕНЮ =====================
@@ -3725,3 +3690,4 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
