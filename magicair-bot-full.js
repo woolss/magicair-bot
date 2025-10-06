@@ -2836,17 +2836,23 @@ async function handleGeneralMessage(chatId, text, userName) {
         messages: [],
         lastUpdate: Date.now()
       };
-    }
-    
-    // Очищаємо історію, якщо минуло більше 24 годин
-    const timeSinceLastMessage = Date.now() - userConversationHistory[chatId].lastUpdate;
-    const ONE_DAY = 24 * 60 * 60 * 1000;
-    
-    if (timeSinceLastMessage > ONE_DAY) {
-      console.log(`🧹 Очищено історію для клієнта ${chatId} (неактивний ${Math.floor(timeSinceLastMessage / 1000 / 60 / 60)} год)`);
-      userConversationHistory[chatId].messages = [];
-    }
-    
+    }   
+    // 🕓 Перевіряємо, скільки часу минуло від останнього повідомлення
+const timeSinceLastMessage = Date.now() - userConversationHistory[chatId].lastUpdate;
+const THIRTY_MINUTES = 30 * 60 * 1000;
+const ONE_DAY = 24 * 60 * 60 * 1000;
+
+// Якщо минуло більше доби — повністю очищаємо історію
+if (timeSinceLastMessage > ONE_DAY) {
+  console.log(`🧹 Очищено історію для клієнта ${chatId} (понад 24 години неактивності)`);
+  userConversationHistory[chatId].messages = [];
+}
+// Якщо минуло більше 30 хв — позначаємо початок нового діалогу
+else if (timeSinceLastMessage > THIRTY_MINUTES && userConversationHistory[chatId].messages.length > 0) {
+  console.log(`🕓 Почато новий контекст для клієнта ${chatId} (понад 30 хвилин тиші)`);
+  const lastAiLine = userConversationHistory[chatId].messages[userConversationHistory[chatId].messages.length - 1];
+  userConversationHistory[chatId].messages = [lastAiLine]; // залишаємо лише останню фразу AI
+}  
  // 2. Створюємо промпт з інструкціями для AI
 const systemPrompt = `
 Ти — уважний, доброзичливий і професійний помічник магазину повітряних кульок в Києві "MagicAir".  
@@ -2967,7 +2973,7 @@ const systemPrompt = `
       if (messages.length > 0) {
         conversationContext.push({
           role: "system",
-          content: `Контекст попередніх повідомлень клієнта (для розуміння діалогу):\n${messages.map((h, i) => `${i + 1}. Клієнт: "${h}"`).join('\n')}`
+          content: `Контекст попередніх повідомлень клієнта (для розуміння діалогу):\n${messages.map((h, i) => `${i + 1}. "${h}"`).join('\n')}`
         });
       }
       
@@ -3013,13 +3019,15 @@ const options = {
 
 await bot.sendMessage(chatId, finalResponseText, options);
 
-     // 🆕 ДОДАНО: Зберігаємо повідомлення клієнта в історію
-      historyData.messages.push(sanitizedText);
-      historyData.lastUpdate = Date.now(); // Оновлюємо timestamp
-      
-      if (historyData.messages.length > 10) {
-        historyData.messages = historyData.messages.slice(-10);
-     }   
+// 🧠 Зберігаємо і питання, і відповідь AI для контексту
+historyData.messages.push(`Клієнт: ${sanitizedText}`);
+historyData.messages.push(`AI: ${aiResponse}`);
+historyData.lastUpdate = Date.now();
+
+// Обрізаємо історію, щоб не розросталась
+if (historyData.messages.length > 12) {
+  historyData.messages = historyData.messages.slice(-12);
+}
       return;
 
     } catch (error) {
@@ -3721,6 +3729,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
