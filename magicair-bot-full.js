@@ -1122,65 +1122,69 @@ if (userProfiles[chatId]?.orderLocked || userProfiles[chatId]?.orderStatus === '
   const isDirectOrder = isOrderMessage(text);
   const isClarification = isOrderClarification(text, chatId);
 
-  // 5️⃣ Створення або уточнення текстового замовлення
-  if (isDirectOrder || isClarification) {
-    // 🔒 Перевірка — якщо замовлення вже фіналізоване
-    if (profile.orderLocked) {
-      await bot.sendMessage(chatId, "🔒 Це замовлення вже готове. Натисніть '✅ Відправити замовлення менеджеру'.");
-      return;
-    }
-
-    // 🟣 Якщо вже є активне замовлення в процесі
-    if (profile.orderStatus === 'collecting') {
-      if (isClarification) {
-        if (profile.lastClarified) {
-          await bot.sendMessage(chatId, "🕓 Ви вже додали уточнення. Натисніть '✅ Відправити замовлення менеджеру' для відправки.");
-          return;
-        }
-        profile.lastOrder += `\n${text}`;
-        profile.lastClarified = true;
-
-        await bot.sendMessage(chatId,
-          `➕ Додано уточнення до вашого замовлення.\n\n📝 Поточний текст замовлення:\n${profile.lastOrder}`,
-          orderCollectionMenu
-        );
-        return;
-      }
-    }
-
-    // 🆕 --- НОВЕ замовлення ---
-    profile.lastOrder = text;
-    profile.orderType = 'text';
-    profile.orderStatus = 'collecting';
-    profile.lastOrderTime = Date.now();
-    profile.lastClarified = false;
-
-    console.log(`🆕 [new order] ${userName} → створено нове замовлення`);
-
-    // 🔍 Перевірка повноти
-    const hasQuantity = /\d+/.test(text) || /штук|шт\b/i.test(text);
-    const hasType = /(латексні|фольговані|цифри|фігури|ходячі|серця|зірки|однотонні|з малюнком|з конфеті|агат|браш|з бантиками)/i.test(text);
-    const hasDate = /(сьогодні|завтра|післязавтра|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})/i.test(text);
-    const hasStore = /(оболонь|теремки|самовивіз)/i.test(text);
-    const detailsCount = [hasQuantity, hasType, hasDate, hasStore].filter(Boolean).length;
-
-    if (detailsCount < 2) {
-      let clarificationMessage = "📝 Я зафіксував ваше замовлення. Для оформлення, будь ласка, уточніть:\n\n";
-      if (!hasQuantity) clarificationMessage += "📦 Скільки кульок потрібно?\n";
-      if (!hasType) clarificationMessage += "🎈 Які саме кульки: латексні, фольговані, цифри?\n";
-      if (!hasDate) clarificationMessage += "📅 На коли потрібна доставка?\n";
-      if (!hasStore) clarificationMessage += "📍 Доставка чи самовивіз (з якого магазину)?\n";
-
-      clarificationMessage += "\n💡 Ви можете додати деталі зараз або натиснути кнопку '✅ Відправити замовлення менеджеру'.";
-
-      await bot.sendMessage(chatId, clarificationMessage, orderCollectionMenu);
-      return;
-    }
-
-    profile.orderStatus = 'ready';
-    await bot.sendMessage(chatId, "✅ Ваше замовлення готове до відправки!\n\n🎯 Натисніть '✅ Відправити замовлення менеджеру'.", orderCollectionMenu);
+  // 5️⃣ Створення або уточнення замовлення (текст або уточнення до активного замовлення)
+// ПРАВИЛО: якщо є активне замовлення у статусі 'collecting' — будь-який текст трактуємо як уточнення
+if (profile.orderStatus === 'collecting') {
+  // Если уже было уточнение — блокируем 2-е уточнение и просим нажать кнопку
+  if (profile.lastClarified) {
+    await bot.sendMessage(
+      chatId,
+      "🕓 Ви вже додали уточнення. Натисніть ✅ 'Відправити замовлення менеджеру' щоб відправити замовлення або 🏠 'Головне меню' щоб почати заново.",
+      orderCollectionMenu
+    );
     return;
   }
+
+  // Принимаем текущее сообщение как УТОЧНЕННЯ (append)
+  profile.lastOrder = (profile.lastOrder ? profile.lastOrder + '\n' : '') + text;
+  profile.lastOrderTime = Date.now();
+  profile.lastClarified = true;
+
+  console.log(`📦 [order update] ${userName} → уточнення додано до активного замовлення`);
+
+  await bot.sendMessage(chatId,
+    `➕ Додано уточнення до вашого замовлення.\n\n📝 Поточний текст замовлення:\n${profile.lastOrder}`,
+    orderCollectionMenu
+  );
+  return;
+}
+
+// Якщо немає активного замовлення — обробляємо як нове замовлення (як було раніше)
+if (isDirectOrder) {
+  // --- НОВЕ замовлення ---
+  profile.lastOrder = text;
+  profile.orderType = 'text';
+  profile.orderStatus = 'collecting';
+  profile.lastOrderTime = Date.now();
+  profile.lastClarified = false;
+
+  console.log(`🆕 [new order] ${userName} → створено нове замовлення`);
+
+  // 🔍 Перевірка повноти
+  const hasQuantity = /\d+/.test(text) || /штук|шт\b/i.test(text);
+  const hasType = /(латексні|фольговані|цифри|фігури|ходячі|серця|зірки|однотонні|з малюнком|з конфеті|агат|браш|з бантиками)/i.test(text);
+  const hasDate = /(сьогодні|завтра|післязавтра|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})/i.test(text);
+  const hasStore = /(оболонь|теремки|самовивіз)/i.test(text);
+  const detailsCount = [hasQuantity, hasType, hasDate, hasStore].filter(Boolean).length;
+
+  if (detailsCount < 2) {
+    let clarificationMessage = "📝 Я зафіксував ваше замовлення. Для оформлення, будь ласка, уточніть:\n\n";
+    if (!hasQuantity) clarificationMessage += "📦 Скільки кульок потрібно?\n";
+    if (!hasType) clarificationMessage += "🎈 Які саме кульки: латексні, фольговані, цифри?\n";
+    if (!hasDate) clarificationMessage += "📅 На коли потрібна доставка?\n";
+    if (!hasStore) clarificationMessage += "📍 Доставка чи самовивіз (з якого магазину)?\n";
+
+    clarificationMessage += "\n💡 Ви можете додати деталі зараз або натиснути кнопку '✅ Відправити замовлення менеджеру'.";
+
+    await bot.sendMessage(chatId, clarificationMessage, orderCollectionMenu);
+    return;
+  }
+
+  // Якщо повне — ставимо 'ready'
+  profile.orderStatus = 'ready';
+  await bot.sendMessage(chatId, "✅ Ваше замовлення готове до відправки!\n\n🎯 Натисніть '✅ Відправити замовлення менеджеру'.", orderCollectionMenu);
+  return;
+}
 
   // 6️⃣ Обробка профілю / пошуку
   if (userStates[chatId]?.step?.startsWith('profile_')) {
@@ -3717,6 +3721,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
