@@ -868,7 +868,6 @@ async function handlePhotoMessage(msg) {
   userProfiles[chatId].lastPhotoOrder = { fileId, caption };
   userProfiles[chatId].lastOrder = caption || "(фото без коментаря)";
   userProfiles[chatId].orderStatus = caption ? 'ready' : 'collecting';
-  userProfiles[chatId].lastClarified = false;
 
   if (!caption) {
     await bot.sendMessage(chatId,
@@ -1140,38 +1139,26 @@ if (isDirectOrder || isOrderClarification(text, chatId)) {
     };
   }
 
- // Якщо замовлення вже створене і триває — додаємо уточнення
-if (profile.orderStatus === 'collecting' && isOrderClarification(text, chatId)) {
-  // 🔒 Обмеження: лише одне уточнення дозволено
-  if (profile.lastClarified) {
-    await bot.sendMessage(chatId,
-      "📦 Будь ласка, натисніть ✅ 'Відправити замовлення менеджеру' або 🏠 'Головне меню'.\n" +
-      "🔒 Ви вже додали уточнення до цього замовлення."
+  // Якщо замовлення вже створене і триває — додаємо уточнення
+  if (profile.orderStatus === 'collecting' && isOrderClarification(text, chatId)) {
+    profile.lastOrder += `\n${text}`;
+    profile.lastOrderTime = Date.now();
+
+    console.log(`📦 [order update] ${userName} → уточнення додано до активного замовлення`);
+    
+    await bot.sendMessage(chatId, 
+      `➕ Додано уточнення до вашого замовлення.\n\n` +
+      `📝 Поточний текст замовлення:\n${profile.lastOrder}`,
+      orderCollectionMenu
     );
     return;
   }
 
-  // ➕ Додаємо уточнення до поточного замовлення
-  profile.lastOrder += `\n${text}`;
-  profile.lastOrderTime = Date.now();
-  profile.lastClarified = true; // ⚙️ помітка, що уточнення вже було
-
-  console.log(`📦 [order update] ${userName} → уточнення додано до активного замовлення`);
-  
-  await bot.sendMessage(chatId, 
-    `➕ Додано уточнення до вашого замовлення.\n\n` +
-    `📝 Поточний текст замовлення:\n${profile.lastOrder}\n\n` +
-    `✅ Натисніть 'Відправити замовлення менеджеру' щоб завершити.`,
-    orderCollectionMenu
-  );
-  return;
-}
   // --- НОВЕ замовлення ---
   profile.lastOrder = text;
   profile.orderType = 'text';
   profile.orderStatus = 'collecting';
   profile.lastOrderTime = Date.now();
-  profile.lastClarified = false;
 
   console.log(`🆕 [new order] ${userName} → створено нове замовлення`);
 
@@ -3738,21 +3725,3 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
