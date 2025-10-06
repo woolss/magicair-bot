@@ -662,6 +662,16 @@ bot.on('message', async (msg) => {
     }
 });
 
+// ==================== 🖼 ОБРОБКА ФОТО ====================
+bot.on('photo', async (msg) => {
+    try {
+        await handlePhotoMessage(msg);
+    } catch (err) {
+        console.error("❌ Помилка при обробці фото:", err.message);
+        await bot.sendMessage(msg.chat.id, "⚠ Помилка при обробці фото. Спробуйте ще раз.");
+    }
+});
+
 // ==================== ОБРОБКА КНОПОК INLINE ====================
 bot.on('callback_query', async (query) => {
   const managerId = query.from.id;
@@ -3714,6 +3724,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
