@@ -1056,12 +1056,11 @@ async function handleClientMessage(msg) {
   const text = msg.text || msg.caption || '';
   const userName = msg.from.first_name || 'Клієнт';
 
-  // 🖼 Якщо це фото — не обробляємо тут
-  if (msg.photo) return;
-  
+  // 🖼 Якщо повідомлення містить фото — не обробляємо тут
+if (msg.photo) return;
+
 // 🧱 Якщо замовлення вже заблоковане (готове до відправки)
-const profile = userProfiles[chatId];
-if (profile?.orderLocked || profile?.orderStatus === 'ready') {
+if (userProfiles[chatId]?.orderLocked || userProfiles[chatId]?.orderStatus === 'ready') {
   await bot.sendMessage(
     chatId,
     "🔒 Це замовлення вже готове. Натисніть ✅ 'Відправити замовлення менеджеру', " +
@@ -1070,6 +1069,7 @@ if (profile?.orderLocked || profile?.orderStatus === 'ready') {
   );
   return;
 }
+
   // 🧩 Захист від порожніх повідомлень
   if (!text.trim()) {
     await bot.sendMessage(chatId, "Повідомлення не може бути пустим.");
@@ -3701,5 +3701,6 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
