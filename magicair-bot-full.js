@@ -985,13 +985,13 @@ async function finalizeAndSendOrder(chatId, userName) {
     }
   }
 
-  // 🧹 Очищення тимчасових даних після відправки
-  profile.clarifications = [];
-  delete profile.orderStatus;
-  delete profile.orderType;
-  delete profile.pendingPhotoOrder;
-  delete profile.lastClarified; // 🔹 важливо для обмеження уточнень
-  delete profile.orderLocked;
+ // 🧹 Очищення тимчасових даних після відправки
+profile.clarifications = [];
+delete profile.orderStatus;
+delete profile.orderType;
+delete profile.pendingPhotoOrder;
+delete profile.lastClarified; // 🔹 важливо для обмеження уточнень
+profile.orderLocked = false;  // ✅ знімаємо блокування після відправки
 }
 
 // ===================== ОБРОБКА ПРЯМОГО ЗАМОВЛЕННЯ (ОНОВЛЕНО) =====================
@@ -1061,13 +1061,18 @@ if (msg.photo) return;
 
 // 🧱 Якщо замовлення вже заблоковане (готове до відправки)
 if (userProfiles[chatId]?.orderLocked || userProfiles[chatId]?.orderStatus === 'ready') {
-  await bot.sendMessage(
-    chatId,
-    "🔒 Це замовлення вже готове. Натисніть ✅ 'Відправити замовлення менеджеру', " +
-    "щоб завершити оформлення або 🏠 'Головне меню', щоб почати нове замовлення.",
-    orderCollectionMenu
-  );
-  return;
+  // 🎯 Але якщо користувач натискає кнопку — дозволяємо далі
+  if (text === "✅ Відправити замовлення менеджеру" || text === "🏠 Головне меню") {
+    // дозволяємо продовження (не блокуємо)
+  } else {
+    await bot.sendMessage(
+      chatId,
+      "🔒 Це замовлення вже готове. Натисніть ✅ 'Відправити замовлення менеджеру', " +
+      "щоб завершити оформлення або 🏠 'Головне меню', щоб почати нове замовлення.",
+      orderCollectionMenu
+    );
+    return;
+  }
 }
 
   // 🧩 Захист від порожніх повідомлень
@@ -2350,48 +2355,55 @@ async function forwardToClient(clientId, text) {
   }
 }
 
-// ==================== ОБНОВЛЕННАЯ ФУНКЦІЯ ЗАВЕРШЕННЯ ЧАТА ====================
+// ==================== ОБНОВЛЕНА ФУНКЦІЯ ЗАВЕРШЕННЯ ЧАТА ====================
 async function handleEndCommand(chatId) {
-  if (userStates[chatId]?.step === 'manager_chat') {
-    const managerId = userStates[chatId].managerId;
 
-    // 🔥 Сразу очищаем состояния
-    delete activeManagerChats[managerId];
-    delete userStates[chatId];
+  // 🧩 Знімаємо блокування замовлення при виході в меню
+  if (userProfiles[chatId]) {
+    userProfiles[chatId].orderLocked = false; // ✅ важливо, інакше клієнт залишиться "заблокованим"
+  }
 
-    // 🧹 Очищаем профиль клиента
-    if (userProfiles[chatId]) {
-      delete userProfiles[chatId].pendingPhotoOrder;
-      delete userProfiles[chatId].lastPhotoOrder;
-      delete userProfiles[chatId].lastOrder;
-      delete userProfiles[chatId].orderStatus;
-      delete userProfiles[chatId].orderType;
-      delete userProfiles[chatId].orderLocked; // 🧹 Разблокируем уточнения
-      userProfiles[chatId].clarifications = [];
-    }
+  if (userStates[chatId]?.step === 'manager_chat') {
+    const managerId = userStates[chatId].managerId;
 
-    // Удаляем кнопку у менеджера
-    await removeManagerNotificationButton(managerId, chatId);
+    // 🔥 Сразу очищаем состояния
+    delete activeManagerChats[managerId];
+    delete userStates[chatId];
 
-    // Уведомляем менеджера
-    if (managerId) {
-      await bot.sendMessage(managerId, `✅ Клієнт завершив чат.`, managerMenu);
-    }
+    // 🧹 Очищаем профиль клиента
+    if (userProfiles[chatId]) {
+      delete userProfiles[chatId].pendingPhotoOrder;
+      delete userProfiles[chatId].lastPhotoOrder;
+      delete userProfiles[chatId].lastOrder;
+      delete userProfiles[chatId].orderStatus;
+      delete userProfiles[chatId].orderType;
+      delete userProfiles[chatId].orderLocked; // 🧹 Разблокируем уточнення
+      userProfiles[chatId].clarifications = [];
+    }
 
-    // Уведомляем клиента
-    if (String(chatId).startsWith('site-')) {
-      await sendToWebClient(chatId, '✅ Чат завершено.');
-    } else {
-      await bot.sendMessage(chatId, '✅ Чат завершено. Повертаємось до головного меню.', mainMenu);
-    }
+    // Удаляем кнопку у менеджера
+    await removeManagerNotificationButton(managerId, chatId);
 
-    return;
-  } else if (isManager(chatId)) {
-    await endManagerChat(chatId);
-  } else {
-    await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
-  }
+    // Уведомляем менеджера
+    if (managerId) {
+      await bot.sendMessage(managerId, `✅ Клієнт завершив чат.`, managerMenu);
+    }
+
+    // Уведомляем клиента
+    if (String(chatId).startsWith('site-')) {
+      await sendToWebClient(chatId, '✅ Чат завершено.');
+    } else {
+      await bot.sendMessage(chatId, '✅ Чат завершено. Повертаємось до головного меню.', mainMenu);
+    }
+
+    return;
+  } else if (isManager(chatId)) {
+    await endManagerChat(chatId);
+  } else {
+    await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
+  }
 }
+
 // ==================== СПРОЩЕНА ФУНКЦІЯ (БЕЗ ВИДАЛЕННЯ КНОПОК) ====================
 async function removeManagerNotificationButton(managerId, clientId) {
   // Просто логируем, нічого не змінюємо
@@ -3701,6 +3713,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
