@@ -1049,13 +1049,36 @@ async function handleDirectOrder(chatId, text, userName) {
   // НОВОЕ: запускаем таймер
   setAutoFinalize(chatId, userName);
 }
+// ==================== ОЧИСТКА СТАНУ ЗАМОВЛЕННЯ ====================
+function resetOrderState(chatId) {
+  const profile = userProfiles[chatId];
+  if (!profile) return;
 
+  delete profile.orderStatus;
+  delete profile.orderType;
+  delete profile.pendingPhotoOrder;
+  delete profile.lastPhotoOrder;
+  delete profile.lastOrder;
+  delete profile.lastClarified;
+  delete profile.orderLocked;
+  delete profile.autoSendTimer;
+  profile.clarifications = [];
+
+  console.log(`🧹 [resetOrderState] очищено замовлення для ${chatId}`);
+}
 // ===================== CLIENT HANDLER =====================
 async function handleClientMessage(msg) {
   const chatId = msg.chat.id;
   const text = msg.text || msg.caption || '';
   const userName = msg.from.first_name || 'Клієнт';
-
+  
+// 🏠 Якщо користувач натиснув "Головне меню" — очищаємо замовлення і виходимо
+  if (text === "🏠 Головне меню") {
+    resetOrderState(chatId);
+    await bot.sendMessage(chatId, '🏠 Ви повернулись у головне меню:', mainMenu);
+    return;
+  }
+  
   // 🖼 Якщо повідомлення містить фото — не обробляємо тут
 if (msg.photo) return;
 
@@ -1207,8 +1230,10 @@ async function handleMenuActions(chatId, text, userName) {
 
   switch (text) {
     case '🏠 Головне меню':
-      await bot.sendMessage(chatId, '🏠 Головне меню:', mainMenu);
-      return true;
+  resetOrderState(chatId);
+  await bot.sendMessage(chatId, '🏠 Ви повернулись у головне меню:', mainMenu);
+  return true;
+
 
     case '🛒 Каталог':
       await bot.sendMessage(chatId, '🛒 Каталог товарів MagicAir:\n\nОберіть категорію:', catalogMenu);
@@ -3750,6 +3775,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
