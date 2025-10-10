@@ -3095,9 +3095,10 @@ historyData.messages.push(`Клієнт: ${sanitizedText}`);
 historyData.messages.push(`AI: ${aiResponse}`);
 historyData.lastUpdate = Date.now();
 
-// Обрізаємо історію, щоб не розросталась
-if (historyData.messages.length > 12) {
-  historyData.messages = historyData.messages.slice(-12);
+// Обмежуємо розмір історії (макс. 20 повідомлень)
+const MAX_HISTORY_SIZE = 20;
+if (historyData.messages.length > MAX_HISTORY_SIZE) {
+  historyData.messages = historyData.messages.slice(-MAX_HISTORY_SIZE);
 }
       return;
 
@@ -3800,6 +3801,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
