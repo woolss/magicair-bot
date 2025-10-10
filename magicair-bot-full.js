@@ -2877,20 +2877,20 @@ async function handleGeneralMessage(chatId, text, userName) {
     }   
     // 🕓 Перевіряємо, скільки часу минуло від останнього повідомлення
 const timeSinceLastMessage = Date.now() - userConversationHistory[chatId].lastUpdate;
-const THIRTY_MINUTES = 30 * 60 * 1000;
-const ONE_DAY = 24 * 60 * 60 * 1000;
+const ONE_HOUR = 60 * 60 * 1000;         // 1 година
+const ONE_DAY = 24 * 60 * 60 * 1000;     // 24 години
 
 // Якщо минуло більше доби — повністю очищаємо історію
 if (timeSinceLastMessage > ONE_DAY) {
   console.log(`🧹 Очищено історію для клієнта ${chatId} (понад 24 години неактивності)`);
   userConversationHistory[chatId].messages = [];
 }
-// Якщо минуло більше 30 хв — позначаємо початок нового діалогу
-else if (timeSinceLastMessage > THIRTY_MINUTES && userConversationHistory[chatId].messages.length > 0) {
-  console.log(`🕓 Почато новий контекст для клієнта ${chatId} (понад 30 хвилин тиші)`);
+// Якщо минуло більше 1 години — позначаємо початок нового діалогу
+else if (timeSinceLastMessage > ONE_HOUR && userConversationHistory[chatId].messages.length > 0) {
+  console.log(`🕓 Почато новий контекст для клієнта ${chatId} (понад 1 годину тиші)`);
   const lastAiLine = userConversationHistory[chatId].messages[userConversationHistory[chatId].messages.length - 1];
-  userConversationHistory[chatId].messages = [lastAiLine]; // залишаємо лише останню фразу AI
-}  
+  userConversationHistory[chatId].messages = [lastAiLine];
+}
  // 2. Створюємо промпт з інструкціями для AI
 const systemPrompt = `
 Ти — уважний, доброзичливий і професійний помічник магазину повітряних кульок в Києві "MagicAir".  
@@ -3801,6 +3801,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
