@@ -1808,21 +1808,27 @@ async function startManagerChatWithClient(managerId, clientId, fromHistory = fal
   }
 
   // Встановлюємо зв'язок
-  activeManagerChats[managerId] = clientId;
-  userStates[clientId] = { 
-    step: 'manager_chat', 
-    managerId: managerId,
-    startTime: Date.now()
-  };
+activeManagerChats[managerId] = clientId;
+userStates[clientId] = { 
+  step: 'manager_chat', 
+  managerId: managerId,
+  startTime: Date.now()
+};
+
 // 🧹 видаляємо запис про сповіщення, щоб уточнення не редагували старе повідомлення
 if (managerNotifications[managerId] && managerNotifications[managerId][clientId]) {
   delete managerNotifications[managerId][clientId];
   console.log(`🧹 Видалено запис managerNotifications[${managerId}][${clientId}] після початку чату`);
 }
-  waitingClients.delete(clientId);
-  waitingClients.delete(String(clientId));
 
-  await bot.sendMessage(managerId, `✅ Ви підключені до клієнта (${clientId}).`);
+waitingClients.delete(clientId);
+waitingClients.delete(String(clientId));
+
+// об'єднуємо в одне повідомлення
+await bot.sendMessage(managerId, 
+  `✅ Ви підключені до клієнта (${clientId}).\n\n` +
+  `⚠️ ВАЖЛИВО: Видаліть повідомлення з кнопкою Почати Чат З Клієнтом вище, щоб уникнути повторних натискань!`
+);
 
   // Повідомляємо клієнта
   try {
@@ -3794,6 +3800,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
