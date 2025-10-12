@@ -2763,12 +2763,16 @@ async function showStats(managerId) {
 
 // ========== PREFILTER FUNCTIONS ==========
 async function startPreFilter(chatId, userName) {
-  await bot.sendMessage(chatId,
-    `💬 ${userName}, щоб швидше вам допомогти, оберіть тему вашого питання:`,
-    prefilterMenu
+  await bot.sendMessage(
+    chatId,
+    `🕒 *Графік роботи менеджерів:*  
+Пн–Нд: 09:00–21:00  
+(У цей час відповідаємо швидше)
+
+💬 ${userName}, щоб швидше вам допомогти, оберіть тему вашого питання:`,
+    { parse_mode: "Markdown", ...prefilterMenu }
   );
 }
-
 async function handlePriceFilter(chatId, messageId, userName) {
   await bot.editMessageText(
     '💰 Питання про ціни:\n\nЗв\'яжіться з менеджером для детальної консультації',
@@ -3826,6 +3830,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
