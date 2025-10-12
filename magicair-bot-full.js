@@ -1410,6 +1410,9 @@ bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
   const messageId = query.message.message_id;
+  const userName = query.from.first_name || "невідомо";
+  // 🧾 Лог усіх кліків користувача (включно з FAQ, каталогом, "Назад" і т.д.)
+  console.log(`${chatId} (${userName}) натиснув кнопку: ${data}`);
 
   // Обработка истории сообщений
   if (data.startsWith('show_history_')) {
@@ -3823,6 +3826,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
