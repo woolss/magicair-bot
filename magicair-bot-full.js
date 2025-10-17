@@ -835,15 +835,39 @@ function setAutoFinalize(chatId, userName) {
 }
 
 // ==================== ОБРОБКА ФОТО ====================
+// ==================== ОБРОБКА ФОТО ====================
 async function handlePhotoMessage(msg) {
   const chatId = msg.chat.id;
   const userName = msg.from.first_name || 'Клієнт';
   const caption = msg.caption || '';
   const fileId = msg.photo[msg.photo.length - 1].file_id;
 
+  // 🔹 Якщо це активний чат з менеджером — просто пересилаємо фото без створення замовлення
+  if (userStates[chatId]?.step === 'manager_chat') {
+    const managerId = userStates[chatId]?.managerId;
+    if (managerId) {
+      await bot.sendPhoto(managerId, fileId, {
+        caption: `📸 Фото від клієнта ${userName} (${chatId})${caption ? `:\n${caption}` : ''}`
+      });
+      console.log(`📸 Фото від клієнта ${chatId} переслано менеджеру ${managerId}`);
+    }
+    return;
+  }
+
+  // 🔹 Якщо фото надсилає менеджер клієнту в активному чаті
+  const managerId = chatId;
+  if (activeManagerChats[managerId]) {
+    const clientId = activeManagerChats[managerId];
+    await bot.sendPhoto(clientId, fileId, {
+      caption: `📸 Фото від менеджера${caption ? `:\n${caption}` : ''}`
+    });
+    console.log(`📸 Фото від менеджера ${managerId} переслано клієнту ${clientId}`);
+    return;
+  }
+
+  // 🧩 Якщо це не чат — обробляємо як фото-замовлення (як було)
   const profile = userProfiles[chatId] || (userProfiles[chatId] = { chatId, created: Date.now() });
 
-  // Якщо фото під час активного замовлення
   if (profile.orderStatus === 'collecting') {
     if (profile.lastClarified) {
       await bot.sendMessage(chatId, "🕓 Ви вже додали уточнення. Натисніть '✅ Відправити замовлення менеджеру'.");
@@ -874,10 +898,10 @@ async function handlePhotoMessage(msg) {
       orderCollectionMenu
     );
   }
-  
-  // 🕓 Автоматична фіналізація, якщо користувач не натисне кнопку
+
   setAutoFinalize(chatId, userName);
 }
+
 // ==================== ФІНАЛІЗАЦІЯ ЗАМОВЛЕННЯ ====================
 async function finalizeAndSendOrder(chatId, userName) {
 
@@ -3830,3 +3854,4 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
