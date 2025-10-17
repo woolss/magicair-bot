@@ -157,6 +157,18 @@ if (process.env.OPENAI_API_KEY) {
 const userStates = {};
 const waitingClients = new Set();
 const activeManagerChats = {};
+
+// ===================== 🔧 Допоміжна функція =====================
+// Повертає ID менеджера, який зараз у чаті з конкретним клієнтом
+function getActiveManagerIdForClient(clientId) {
+  for (const [managerId, activeClientId] of Object.entries(activeManagerChats)) {
+    if (String(activeClientId) === String(clientId)) {
+      return Number(managerId);
+    }
+  }
+  return null;
+}
+
 const messageLog = [];
 const userProfiles = {};
 const managerLocks = {};
@@ -3886,6 +3898,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
