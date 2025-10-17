@@ -1342,48 +1342,29 @@ async function handleManagerMessage(msg) {
   const managerId = msg.chat.id;
   const text = msg.text || '';
 
-  // Повний список службових команд менеджера
-  const managerCommands = [
-    '📋 Клієнти',
-    '🎁 Активні акції',
-    '📄 Журнал',
-    '🛑 Завершити чат',
-    '📊 Статистика',
-    '🎁 Створити акцію',
-    '🔍 Пошук історії',
-    '📢 Масова розсилка'
-  ];
+  const managerCommands = ['📋 Клієнти', '🎁 Активні акції', '📄 Журнал', '🛑 Завершити чат', '📊 Статистика', '📢 Масова розсилка', '🔍 Пошук історії',];
 
   if (userStates[managerId]?.step?.startsWith('promo_')) {
     await handlePromotionInput(managerId, text, userStates[managerId].step);
     return;
   }
 
-  // 🔹 Якщо у менеджера є активний чат
-  if (activeManagerChats[managerId]) {
-    const clientId = activeManagerChats[managerId];
+  if (activeManagerChats[managerId] && !managerCommands.includes(text)) {
+  const clientId = activeManagerChats[managerId];
+  const messageText = `👨‍💼 ${getManagerName(managerId)}: ${text}`;
 
-    // 🚫 Не пересилаємо службові кнопки клієнту
-    if (managerCommands.includes(text)) {
-      console.log(`⚙️ Менеджер ${managerId} натиснув службову кнопку "${text}" — не пересилаємо клієнту`);
-    } else {
-      // Пересилаємо звичайне повідомлення клієнту
-      const messageText = `👨‍💼 ${getManagerName(managerId)}: ${text}`;
-      try {
-        if (String(clientId).startsWith('site-')) {
-          await sendToWebClient(clientId, messageText);
-        } else {
-          await bot.sendMessage(clientId, messageText);
-        }
-        await logMessage(managerId, clientId, text, 'manager');
-      } catch (e) {
-        console.error(`❌ Не вдалося переслати повідомлення клієнту ${clientId}:`, e.message || e);
-      }
-    }
-    return; // Важливо! — щоб не падати нижче у switch
+  if (String(clientId).startsWith('site-')) {
+    // Веб-клиент → отправляем через мост
+    await sendToWebClient(clientId, messageText);
+  } else {
+    // Телеграм-клиент → обычная отправка
+    await bot.sendMessage(clientId, messageText);
   }
 
-  // 🧭 Якщо менеджер НЕ в активному чаті — обробляємо технічні команди
+  await logMessage(managerId, clientId, text, 'manager');
+  return;
+}
+
   switch (text) {
     case '📋 Клієнти':
       delete userStates[managerId];
@@ -1431,24 +1412,23 @@ async function handleManagerMessage(msg) {
       await startPromotionCreation(managerId);
       break;
 
-    default:
-      if (!activeManagerChats[managerId]) {
-        await bot.sendMessage(managerId, '👨‍💼 Будь ласка, оберіть дію з меню.');
-      }
-      break;
+  default:
+  if (!activeManagerChats[managerId]) {
+    await bot.sendMessage(managerId, '👨‍💼 Будь ласка, оберіть дію з меню.');
   }
-
-  if (userStates[managerId]?.step === 'search_history' && text !== '🔍 Пошук історії') {
-    await searchClientHistory(managerId, text.trim());
-    return;
-  }
-
-  if (userStates[managerId]?.step === 'broadcast_message' && text !== '📢 Масова розсилка') {
-    await handleBroadcastInput(managerId, text);
-    return;
-  }
+  break;
 }
 
+if (userStates[managerId]?.step === 'search_history' && text !== '🔍 Пошук історії') {
+  await searchClientHistory(managerId, text.trim());
+  return;
+}
+
+if (userStates[managerId]?.step === 'broadcast_message' && text !== '📢 Масова розсилка') {
+  await handleBroadcastInput(managerId, text);
+  return;
+}
+} 
 // ========== CALLBACK QUERIES ==========
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
@@ -3874,5 +3854,6 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
