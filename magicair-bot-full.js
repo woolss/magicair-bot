@@ -349,7 +349,7 @@ const prefilterMenu = {
       [{ text: '🎈 Вибір кульок', callback_data: 'filter_balloons' }],
       [{ text: '🎉 Оформлення свята', callback_data: 'filter_event' }],
       [{ text: '🚨Термінове питання', callback_data: 'filter_urgent' }],
-      [{ text: '❓ Інше питання', callback_data: 'filter_other' }]
+      [{ text: '🛍 Питання про моє замовлення', callback_data: 'filter_other' }]
     ]
   }
 };
@@ -3861,6 +3861,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
