@@ -1681,8 +1681,8 @@ bot.on('callback_query', async (query) => {
         await connectClientToManager(chatId, messageId, query.from.first_name || 'Клієнт', 'Термінове питання');
         break;
       case 'filter_other':
-        await connectClientToManager(chatId, messageId, query.from.first_name || 'Клієнт', 'Інше питання');
-        break;
+        await connectClientToManager(chatId, messageId, query.from.first_name || 'Клієнт', 'Питання про моє замовлення');
+      break;
 
       // ЗДЕСЬ ДОБАВЛЕНА ПЕРЕДАЧА ТЕМЫ для всех "Connect" кнопок
       case 'connect_price':
@@ -3861,6 +3861,7 @@ process.on('SIGTERM', async () => {
   if (pool) await pool.end();
   process.exit(0);
 });
+
 
 
 
